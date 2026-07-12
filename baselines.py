@@ -461,8 +461,7 @@ def calc_gaussian_scores_best(dataloader, best, device="cpu"):
 # Main
 # ---------------------------------------------------------------------
 
-def main():
-    data_dir = Path("/Users/marone/PycharmProjects/neutral-atom-imaging-simulation-main/test_dataset_1")
+def main(data_dir):
     model_dir = Path("data")
     model_dir.mkdir(exist_ok=True)
 
@@ -470,7 +469,7 @@ def main():
 
     s_values = range(2, 15, 2)
 
-    batch_size = 500
+    batch_size = 1
     num_workers = 8
     seed = 42
 
@@ -685,4 +684,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main(data_dir= Path("/Users/marone/PycharmProjects/neutral-atom-imaging-simulation-main/dataset_3x3"))
