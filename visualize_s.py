@@ -26,6 +26,34 @@ METHOD_COLORS = {
 
 MODEL_RE = re.compile(r"qubit_dataset_sim_([0-9]+(?:\.[0-9]+)?)_(.+)\.joblib$")
 
+def make_repeated_record(path, exposure, method, model):
+    repeats = model["repeat_results"]
+
+    # Shape: (n_repeats, n_sites)
+    s = np.stack([np.asarray(r["best_s"], dtype=float) for r in repeats])
+    threshold = np.stack([np.asarray(r["thresholds"], dtype=float) for r in repeats])
+    val_fidelity = np.stack([np.asarray(r["val_fidelity"], dtype=float) for r in repeats])
+
+    # Collapse repeats -> one value per site, like the old single-run files.
+    mean_s_per_site = s.mean(axis=0)
+    mean_threshold_per_site = threshold.mean(axis=0)
+    mean_val_fidelity_per_site = val_fidelity.mean(axis=0)
+
+    return {
+        "path": path,
+        "exposure": exposure,
+        "method": method,
+        "s": mean_s_per_site,
+        "threshold": mean_threshold_per_site,
+        "mean_s": float(np.mean(mean_s_per_site)),
+        "std_s": float(np.std(mean_s_per_site)),
+        "mean_threshold": float(np.mean(mean_threshold_per_site)),
+        "std_threshold": float(np.std(mean_threshold_per_site)),
+        "mean_fidelity": float(np.mean(mean_val_fidelity_per_site)),
+        "mean_infidelity": float(1.0 - np.mean(mean_val_fidelity_per_site)),
+        "n_sites": int(mean_s_per_site.size),
+        "n_repeats": int(s.shape[0]),
+    }
 
 def parse_model_name(path):
     match = MODEL_RE.fullmatch(path.name)
@@ -63,11 +91,20 @@ def collect_records(model_dir):
             continue
 
         exposure, method = parsed
+        model = joblib.load(path)
+
+        if "repeat_results" in model:
+            if method.startswith("mf_site_") and method.endswith("_splits"):
+                method = "mf_site"
+
+            if method not in METHODS:
+                continue
+
+            records.append(make_repeated_record(path, exposure, method, model))
+            continue
 
         if method not in METHODS:
             continue
-
-        model = joblib.load(path)
 
         if "s" not in model:
             continue
