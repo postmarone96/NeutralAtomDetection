@@ -15,10 +15,16 @@ PROJECT_NAME = "lightweight_cnn_site"
 BACKEND = "Vitis"
 IO_TYPE = "io_parallel"
 DEFAULT_PRECISION = "ap_fixed<16,6>"
-REUSE_FACTOR = 64
+REUSE_FACTOR = 72
 STRATEGY = "Resource"
 TARGET_PART = "xc7z020clg400-1"
 CLOCK_PERIOD_NS = 10
+LAYER_REUSE_FACTORS = {
+    "features_0": 72,
+    "features_3": 72,
+    "features_6": 72,
+    "classifier_2": 16,
+}
 
 N_VALIDATION_CROPS = 128
 VALIDATION_H5_PATH = None
@@ -257,6 +263,13 @@ def make_hls_config(hls4ml, model, crop_size):
     config.setdefault("Model", {})
     config["Model"]["Strategy"] = STRATEGY
     config["Model"]["ReuseFactor"] = int(REUSE_FACTOR)
+
+    layer_config = config.get("LayerName", {})
+    for layer_name, reuse_factor in LAYER_REUSE_FACTORS.items():
+        if layer_name in layer_config:
+            layer_config[layer_name]["ReuseFactor"] = int(reuse_factor)
+            layer_config[layer_name]["Strategy"] = STRATEGY
+
     return config
 
 
@@ -301,6 +314,7 @@ def main():
     print(f"  io_type:              {IO_TYPE}")
     print(f"  precision:            {DEFAULT_PRECISION}")
     print(f"  reuse factor:         {REUSE_FACTOR}")
+    print(f"  layer reuse factors:  {LAYER_REUSE_FACTORS}")
     print(f"  output dir:           {HLS_OUTPUT_DIR}")
 
     config = make_hls_config(hls4ml, model, crop_size)
