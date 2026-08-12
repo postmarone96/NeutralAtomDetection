@@ -2,42 +2,102 @@ import h5py
 import torch
 import numpy as np
 import joblib
-import time
 from pathlib import Path
 from scipy.optimize import curve_fit
 from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
 
 from mf_site import (
     classification_fidelity
 )
 
-from utils import H5Dataset, get_device, sync_device, extract_patches
+from utils import H5Dataset, get_device, extract_patches
 
 # ---------------------------------------------------------------------
 # Threshold tuning
 # ---------------------------------------------------------------------
 
-def best_threshold_by_fidelity(scores, y, n_thresholds=400):
-    scores = np.asarray(scores)
-    y = np.asarray(y)
+def best_threshold_by_fidelity(scores, y):
+    scores = np.asarray(scores, dtype=np.float64).reshape(-1)
+    target = np.asarray(y).reshape(-1) > 0.5
 
-    lo = float(np.min(scores))
-    hi = float(np.max(scores))
+    finite = np.isfinite(scores)
+    scores = scores[finite]
+    target = target[finite]
+    if scores.size == 0:
+        raise ValueError("cannot choose a threshold from empty/non-finite scores")
 
-    if lo == hi:
-        fid = classification_fidelity(scores, y, lo)
-        return lo, fid
+    unique_scores, inverse = np.unique(scores, return_inverse=True)
+    n_unique = unique_scores.size
 
-    best_t = lo
-    best_fid = -1.0
+    dark = ~target
+    bright = target
+    n_dark = int(dark.sum())
+    n_bright = int(bright.sum())
+    total_dark = max(n_dark, 1)
+    total_bright = max(n_bright, 1)
 
-    for t in np.linspace(lo, hi, n_thresholds):
-        fid = classification_fidelity(scores, y, t)
-        if fid > best_fid:
-            best_fid = fid
-            best_t = float(t)
+    dark_by_score = np.bincount(
+        inverse,
+        weights=dark.astype(np.float64),
+        minlength=n_unique,
+    )
+    bright_by_score = np.bincount(
+        inverse,
+        weights=bright.astype(np.float64),
+        minlength=n_unique,
+    )
 
-    return best_t, best_fid
+    dark_below_threshold = np.concatenate([[0.0], np.cumsum(dark_by_score)])
+    bright_below_threshold = np.concatenate([[0.0], np.cumsum(bright_by_score)])
+
+    false_bright = n_dark - dark_below_threshold
+    false_dark = bright_below_threshold
+    fidelities = 1.0 - 0.5 * (
+        false_bright / total_dark + false_dark / total_bright
+    )
+
+    score_span = float(unique_scores[-1] - unique_scores[0])
+    edge_pad = max(score_span * 1e-6, abs(float(unique_scores[0])) * 1e-6, 1e-12)
+
+    if n_unique == 1:
+        candidate_thresholds = np.array(
+            [unique_scores[0] - edge_pad, unique_scores[0] + edge_pad],
+            dtype=np.float64,
+        )
+    else:
+        midpoint_thresholds = (unique_scores[:-1] + unique_scores[1:]) / 2.0
+        candidate_thresholds = np.concatenate(
+            [
+                [unique_scores[0] - edge_pad],
+                midpoint_thresholds,
+                [unique_scores[-1] + edge_pad],
+            ]
+        )
+
+    best_fid = float(np.max(fidelities))
+    best_indices = np.flatnonzero(
+        np.isclose(fidelities, best_fid, rtol=1e-12, atol=1e-12)
+    )
+
+    run_starts = np.r_[0, np.flatnonzero(np.diff(best_indices) > 1) + 1]
+    run_ends = np.r_[run_starts[1:], best_indices.size]
+    best_run = None
+    best_run_width = -np.inf
+
+    for start, end in zip(run_starts, run_ends):
+        run = best_indices[start:end]
+        width = candidate_thresholds[run[-1]] - candidate_thresholds[run[0]]
+        if width > best_run_width:
+            best_run_width = width
+            best_run = run
+
+    best_t = 0.5 * (
+        candidate_thresholds[best_run[0]]
+        + candidate_thresholds[best_run[-1]]
+    )
+
+    return float(best_t), best_fid
 
 
 def tune_thresholds(scores, labels):
@@ -210,11 +270,8 @@ def square_with_s_sweep(
         "history": [],
     }
 
-    for s in s_values:
-        print(f"\n=== square s={s} ===")
-        sync_device(device)
-        start = time.perf_counter()
-
+    progress = tqdm(s_values, desc="Square s sweep", unit="s", leave=True)
+    for s in progress:
         scores, labels = calc_square_scores(
             val_loader,
             s=s,
@@ -236,8 +293,7 @@ def square_with_s_sweep(
             "mean_fidelity": float(np.mean(fidelities)),
         })
 
-        print(f"mean fidelity={np.mean(fidelities):.6f}")
-        print(f"time={time.perf_counter() - start:.2f}s")
+        # progress.set_postfix(mean_val_fidelity=f"{np.mean(fidelities):.8f}")
 
     return best
 
@@ -324,11 +380,8 @@ def gaussian_with_s_sweep(
         "normalize_kernel": normalize,
     }
 
-    for s in s_values:
-        print(f"\n=== gaussian s={s} ===")
-        sync_device(device)
-        start = time.perf_counter()
-
+    progress = tqdm(s_values, desc="Gaussian s sweep", unit="s", leave=True)
+    for s in progress:
         scores, labels = calc_gaussian_scores(
             val_loader,
             s=s,
@@ -353,8 +406,7 @@ def gaussian_with_s_sweep(
             "mean_fidelity": float(np.mean(fidelities)),
         })
 
-        print(f"mean fidelity={np.mean(fidelities):.6f}")
-        print(f"time={time.perf_counter() - start:.2f}s")
+        # progress.set_postfix(mean_val_fidelity=f"{np.mean(fidelities):.8f}")
 
     return best
 
@@ -461,8 +513,7 @@ def calc_gaussian_scores_best(dataloader, best, device="cpu"):
 # Main
 # ---------------------------------------------------------------------
 
-def main(data_dir):
-    model_dir = Path("data")
+def main(data_dir, model_dir):
     model_dir.mkdir(exist_ok=True)
 
     h5_paths = sorted(data_dir.glob("*.h5"))
@@ -479,17 +530,8 @@ def main(data_dir):
         square_out_model = model_dir / f"{h5_path.stem}_square.joblib"
         gaussian_out_model = model_dir / f"{h5_path.stem}_gaussian.joblib"
 
-        print("\n" + "=" * 80)
-        print("Dataset:", h5_path)
-        print("Square output:", square_out_model)
-        print("Gaussian output:", gaussian_out_model)
-        print("=" * 80)
-
         with h5py.File(h5_path, "r") as f:
             N = f["images"].shape[0]
-            print("images:", f["images"].shape)
-            print("labels:", f["labels"].shape)
-            print("sites:", f["sites"].shape)
 
         rng = np.random.default_rng(seed)
         idx = rng.permutation(N)
@@ -503,17 +545,6 @@ def main(data_dir):
 
         device = get_device()
 
-        print("train/val/test:", len(train_idx), len(val_idx), len(test_idx))
-        print("device:", device)
-
-        # -------------------------------------------------------------
-        # Fit Gaussian widths from averaged training image
-        # -------------------------------------------------------------
-
-        print("\n" + "-" * 80)
-        print("Fitting Gaussian sigmas from averaged training image")
-        print("-" * 80)
-
         avg_image, sites = compute_average_image(
             h5_path=h5_path,
             indices=train_idx,
@@ -526,17 +557,6 @@ def main(data_dir):
             sites=sites,
             fit_size=9,
         )
-
-        print("Fitted Gaussian sigmas per site:")
-        print(fitted_sigmas)
-
-        # -------------------------------------------------------------
-        # Train square baseline
-        # -------------------------------------------------------------
-
-        print("\n" + "-" * 80)
-        print("Training square baseline")
-        print("-" * 80)
 
         square_trained = square_with_s_sweep(
             h5_path=h5_path,
@@ -555,23 +575,6 @@ def main(data_dir):
             "test_idx": test_idx,
             "s_values": list(s_values),
         }
-
-        print("\nSquare best s per site:")
-        print(square_trained["s"])
-
-        print("\nSquare threshold per site:")
-        print(square_trained["threshold"])
-
-        print("\nSquare validation fidelity per site:")
-        print(square_trained["val_fidelity"])
-
-        # -------------------------------------------------------------
-        # Train Gaussian baseline
-        # -------------------------------------------------------------
-
-        print("\n" + "-" * 80)
-        print("Training Gaussian baseline")
-        print("-" * 80)
 
         gaussian_trained = gaussian_with_s_sweep(
             h5_path=h5_path,
@@ -593,22 +596,6 @@ def main(data_dir):
             "s_values": list(s_values),
             "fitted_sigmas": fitted_sigmas,
         }
-
-        print("\nGaussian best s per site:")
-        print(gaussian_trained["s"])
-
-        print("\nGaussian fitted sigma per site:")
-        print(gaussian_trained["sigma"])
-
-        print("\nGaussian threshold per site:")
-        print(gaussian_trained["threshold"])
-
-        print("\nGaussian validation fidelity per site:")
-        print(gaussian_trained["val_fidelity"])
-
-        # -------------------------------------------------------------
-        # Evaluate on held-out test split
-        # -------------------------------------------------------------
 
         test_loader = DataLoader(
             H5Dataset(h5_path, indices=test_idx),
@@ -667,21 +654,18 @@ def main(data_dir):
         joblib.dump(square_save_obj, square_out_model)
         joblib.dump(gaussian_save_obj, gaussian_out_model)
 
-        print("\nSquare test fidelity per site:")
-        print(square_test_fids)
-        print("Square mean test fidelity:", float(np.mean(square_test_fids)))
-        print("Square test errors per site:", square_save_obj["test_errors_per_site"])
-        print("Square total test errors:", square_save_obj["test_total_errors"])
-
-        print("\nGaussian test fidelity per site:")
-        print(gaussian_test_fids)
-        print("Gaussian mean test fidelity:", float(np.mean(gaussian_test_fids)))
-        print("Gaussian test errors per site:", gaussian_save_obj["test_errors_per_site"])
-        print("Gaussian total test errors:", gaussian_save_obj["test_total_errors"])
-
-        print("\nSaved square model:", square_out_model)
-        print("Saved Gaussian model:", gaussian_out_model)
+        print(
+            f"Saved {square_out_model} | "
+            f"mean F={square_save_obj['test_mean_fidelity']:.8f}"
+        )
+        print(
+            f"Saved {gaussian_out_model} | "
+            f"mean F={gaussian_save_obj['test_mean_fidelity']:.8f}"
+        )
 
 
 if __name__ == "__main__":
-    main(data_dir= Path("/Users/marone/PycharmProjects/neutral-atom-imaging-simulation-main/dataset_3x3"))
+    main(
+        data_dir = Path("/Users/marone/PycharmProjects/neutral-atom-imaging-simulation-main/dataset_3x3"),
+        model_dir = Path("models_3x3"),
+    )

@@ -7,6 +7,7 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
+from baselines import fit_sigmas_from_average_image
 from mf_site import (
     best_threshold_by_fidelity,
     classification_fidelity,
@@ -15,6 +16,22 @@ from utils import (
     H5Dataset, get_device, compute_preprocessing,
     learn_W, calc_score
 )
+
+
+def coordinate_neighbor_indices(sites, n_neighbors=8):
+    sites = np.asarray(sites, dtype=np.float32)
+    if sites.ndim != 2 or sites.shape[1] != 2:
+        raise ValueError(f"expected sites with shape (n_sites, 2), got {sites.shape}")
+
+    n_sites = sites.shape[0]
+    if n_sites < 2:
+        raise ValueError("MF-array neighbor context requires at least 2 sites")
+
+    n_neighbors = min(int(n_neighbors), n_sites - 1)
+    distances = np.sum((sites[:, None, :] - sites[None, :, :]) ** 2, axis=2)
+    np.fill_diagonal(distances, np.inf)
+
+    return np.argsort(distances, axis=1)[:, :n_neighbors].astype(np.int64)
 
 
 def mf_array_with_s_sweep(
@@ -28,6 +45,11 @@ def mf_array_with_s_sweep(
     device="cpu",
     mean_image=None,
     scale=None,
+    gaussian=False,
+    gaussian_sigmas=None,
+    gaussian_normalize=False,
+    neighbor_indices=None,
+    neighbor_context=None,
 ):
     train_loader = DataLoader(
         H5Dataset(h5_path, indices=train_idx, mean_image=mean_image, scale=scale),
@@ -48,6 +70,8 @@ def mf_array_with_s_sweep(
     )
 
     n_qubits = H5Dataset(h5_path, indices=[0]).sites.shape[0]
+    if gaussian and gaussian_sigmas is None:
+        raise ValueError("gaussian=True requires fitted gaussian_sigmas")
 
     best = {
         "method": "mf_array",
@@ -57,9 +81,20 @@ def mf_array_with_s_sweep(
         "val_fidelity": np.full(n_qubits, -np.inf, dtype=np.float32),
         "history": [],
         "alpha": alpha,
+        "mf_array_gaussian": bool(gaussian),
+        "mf_array_context": "gaussian" if gaussian else "mean",
+        "mf_array_gaussian_normalize": bool(gaussian_normalize),
     }
+    if neighbor_indices is not None:
+        best["mf_array_neighbor_indices"] = np.asarray(
+            neighbor_indices,
+            dtype=np.int64,
+        ).copy()
+        best["mf_array_neighbor_context"] = neighbor_context or "custom"
+    if gaussian:
+        best["mf_array_sigmas"] = np.asarray(gaussian_sigmas, dtype=np.float32).copy()
 
-    progress = tqdm(s_values, desc="MF-Array s sweep", unit="s")
+    progress = tqdm(s_values, desc="MF-Array s sweep", unit="s", leave=False)
     for s in progress:
         learned_W = learn_W(
             train_loader,
@@ -67,6 +102,10 @@ def mf_array_with_s_sweep(
             mf_array=True,
             alpha=alpha,
             device=device,
+            mf_array_gaussian=gaussian,
+            mf_array_sigmas=gaussian_sigmas,
+            mf_array_gaussian_normalize=gaussian_normalize,
+            mf_array_neighbor_indices=neighbor_indices,
         )
 
         val_scores, val_labels = calc_score(
@@ -75,6 +114,10 @@ def mf_array_with_s_sweep(
             W=learned_W,
             mf_array=True,
             device=device,
+            mf_array_gaussian=gaussian,
+            mf_array_sigmas=gaussian_sigmas,
+            mf_array_gaussian_normalize=gaussian_normalize,
+            mf_array_neighbor_indices=neighbor_indices,
         )
 
         thresholds = np.zeros(n_qubits, dtype=np.float32)
@@ -101,7 +144,7 @@ def mf_array_with_s_sweep(
             "mean_fidelity": float(np.mean(fidelities)),
         })
 
-        progress.set_postfix(mean_val_fidelity=f"{np.mean(fidelities):.8f}")
+        # progress.set_postfix(mean_val_fidelity=f"{np.mean(fidelities):.8f}")
 
     return best
 
@@ -109,13 +152,17 @@ def mf_array_with_s_sweep(
 def calc_best_scores_array(dataloader, best, device="cpu"):
     n_qubits = len(best["s"])
     best_s = np.asarray(best["s"])
+    gaussian = bool(best.get("mf_array_gaussian", False))
+    gaussian_sigmas = best.get("mf_array_sigmas")
+    gaussian_normalize = bool(best.get("mf_array_gaussian_normalize", False))
+    neighbor_indices = best.get("mf_array_neighbor_indices")
 
     all_scores = None
     all_labels = None
 
     for s in sorted(set(int(v) for v in best_s)):
         site_indices = np.where(best_s == s)[0]
-        feature_dim = s * s + (n_qubits - 1) + 1
+        feature_dim = int(best["W"][site_indices[0]].shape[0])
         W = torch.zeros((n_qubits, feature_dim, 1), dtype=best["W"][site_indices[0]].dtype)
 
         for q in site_indices:
@@ -127,6 +174,10 @@ def calc_best_scores_array(dataloader, best, device="cpu"):
             W=W,
             mf_array=True,
             device=device,
+            mf_array_gaussian=gaussian,
+            mf_array_sigmas=gaussian_sigmas,
+            mf_array_gaussian_normalize=gaussian_normalize,
+            mf_array_neighbor_indices=neighbor_indices,
         )
 
         if all_scores is None:
@@ -164,9 +215,206 @@ def evaluate_best_model_array(dataloader, best, device="cpu"):
     }
 
 
-def main():
-    data_dir = Path("/Users/marone/PycharmProjects/neutral-atom-imaging-simulation-main/test_dataset")
-    model_dir = Path("data")
+def make_random_split(
+    n_samples: int,
+    seed: int,
+    train_fraction: float = 0.60,
+    val_fraction: float = 0.20,
+):
+    if n_samples < 5:
+        raise ValueError("At least 5 samples are required.")
+
+    rng = np.random.default_rng(seed)
+    indices = rng.permutation(n_samples)
+
+    n_train = int(train_fraction * n_samples)
+    n_val = int(val_fraction * n_samples)
+
+    train_idx = indices[:n_train]
+    val_idx = indices[n_train:n_train + n_val]
+    test_idx = indices[n_train + n_val:]
+
+    return train_idx, val_idx, test_idx
+
+
+def run_one_split(
+    h5_path,
+    split_seed,
+    s_values,
+    alpha,
+    batch_size,
+    num_workers,
+    device,
+    gaussian=False,
+    gaussian_normalize=False,
+    neighbor_indices=None,
+    neighbor_context=None,
+):
+    with h5py.File(h5_path, "r") as f:
+        n_samples = f["images"].shape[0]
+
+    train_idx, val_idx, test_idx = make_random_split(
+        n_samples=n_samples,
+        seed=split_seed,
+    )
+
+    mean_image, scale = compute_preprocessing(h5_path, train_idx)
+    gaussian_sigmas = None
+    if gaussian:
+        sites = H5Dataset(h5_path, indices=[0]).sites
+        gaussian_sigmas = fit_sigmas_from_average_image(
+            avg_image=mean_image,
+            sites=sites,
+            fit_size=9,
+        )
+    if neighbor_indices is None and neighbor_context == "coordinate_8_nearest":
+        sites = H5Dataset(h5_path, indices=[0]).sites.numpy()
+        neighbor_indices = coordinate_neighbor_indices(sites, n_neighbors=8)
+
+    trained = mf_array_with_s_sweep(
+        h5_path=h5_path,
+        train_idx=train_idx,
+        val_idx=val_idx,
+        s_values=s_values,
+        alpha=alpha,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        device=device,
+        mean_image=mean_image,
+        scale=scale,
+        gaussian=gaussian,
+        gaussian_sigmas=gaussian_sigmas,
+        gaussian_normalize=gaussian_normalize,
+        neighbor_indices=neighbor_indices,
+        neighbor_context=neighbor_context,
+    )
+
+    test_loader = DataLoader(
+        H5Dataset(
+            h5_path,
+            indices=test_idx,
+            mean_image=mean_image,
+            scale=scale,
+        ),
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=False,
+        persistent_workers=num_workers > 0,
+    )
+
+    test_metrics = evaluate_best_model_array(
+        test_loader,
+        trained,
+        device=device,
+    )
+
+    return {
+        "seed": split_seed,
+        "train_idx": train_idx,
+        "val_idx": val_idx,
+        "test_idx": test_idx,
+        "mean_image": mean_image,
+        "scale": scale,
+        "mf_array_gaussian": bool(gaussian),
+        "mf_array_context": "gaussian" if gaussian else "mean",
+        "mf_array_sigmas": None if gaussian_sigmas is None else gaussian_sigmas.copy(),
+        "mf_array_gaussian_normalize": bool(gaussian_normalize),
+        "mf_array_neighbor_indices": (
+            None
+            if neighbor_indices is None
+            else np.asarray(neighbor_indices, dtype=np.int64).copy()
+        ),
+        "mf_array_neighbor_context": neighbor_context,
+        "best_s": np.asarray(trained["s"]).copy(),
+        "thresholds": np.asarray(trained["threshold"]).copy(),
+        "val_fidelity": np.asarray(trained["val_fidelity"]).copy(),
+        "test_fidelity": np.asarray(test_metrics["fidelity"]).copy(),
+        "test_mean_fidelity": float(test_metrics["mean_fidelity"]),
+        "test_raw_accuracy": float(test_metrics["raw_accuracy"]),
+        "test_errors_per_site": np.asarray(
+            test_metrics["errors_per_site"]
+        ).copy(),
+        "test_total_errors": int(test_metrics["total_errors"]),
+        "trained_model": trained,
+    }
+
+
+def repeated_split_evaluation(
+    h5_path,
+    n_repeats=10,
+    base_seed=42,
+    s_values=range(2, 15, 2),
+    alpha=1e-4,
+    batch_size=500,
+    num_workers=2,
+    device="cpu",
+    gaussian=False,
+    gaussian_normalize=False,
+):
+    repeat_results = []
+
+    progress = tqdm(
+        range(n_repeats),
+        desc=f"{h5_path.stem} MF-Array repeats",
+        unit="split",
+        leave=False,
+    )
+    for repeat_idx in progress:
+        split_seed = base_seed + repeat_idx
+
+        result = run_one_split(
+            h5_path=h5_path,
+            split_seed=split_seed,
+            s_values=s_values,
+            alpha=alpha,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            device=device,
+            gaussian=gaussian,
+            gaussian_normalize=gaussian_normalize,
+        )
+        repeat_results.append(result)
+
+        # progress.set_postfix(mean_test_fidelity=f"{result['test_mean_fidelity']:.8f}")
+
+    per_site_fidelity = np.stack(
+        [r["test_fidelity"] for r in repeat_results],
+        axis=0,
+    )
+    per_repeat_mean_fidelity = np.asarray(
+        [r["test_mean_fidelity"] for r in repeat_results],
+        dtype=np.float64,
+    )
+
+    n_qubits = per_site_fidelity.shape[1]
+    mean_fidelity_per_site = per_site_fidelity.mean(axis=0)
+    std_fidelity_per_site = per_site_fidelity.std(axis=0, ddof=1)
+    sem_fidelity_per_site = std_fidelity_per_site / np.sqrt(n_repeats)
+
+    std_repeat_mean_fidelity = per_repeat_mean_fidelity.std(ddof=1)
+    sem_repeat_mean_fidelity = std_repeat_mean_fidelity / np.sqrt(n_repeats)
+
+    return {
+        "n_repeats": n_repeats,
+        "n_qubits": n_qubits,
+        "base_seed": base_seed,
+        "per_site_fidelity": per_site_fidelity,
+        "per_repeat_mean_fidelity": per_repeat_mean_fidelity,
+        "mean_fidelity_per_site": mean_fidelity_per_site,
+        "std_fidelity_per_site": std_fidelity_per_site,
+        "sem_fidelity_per_site": sem_fidelity_per_site,
+        "mean_fidelity": float(per_repeat_mean_fidelity.mean()),
+        "std_mean_fidelity": float(std_repeat_mean_fidelity),
+        "sem_mean_fidelity": float(sem_repeat_mean_fidelity),
+        "repeat_results": repeat_results,
+        "mf_array_gaussian": bool(gaussian),
+        "mf_array_context": "gaussian" if gaussian else "mean",
+        "mf_array_gaussian_normalize": bool(gaussian_normalize),
+    }
+
+
+def main(data_dir, model_dir):
     model_dir.mkdir(exist_ok=True)
 
     h5_paths = sorted(data_dir.glob("*.h5"))
@@ -175,109 +423,65 @@ def main():
     alpha = 1e-4
     batch_size = 500
     num_workers = 2
-    seed = 42
+    base_seed = 42
+    n_repeats = 10
+    gaussian = True
+    gaussian_normalize = True
+    device = get_device()
 
     for h5_path in h5_paths:
-        out_model = model_dir / f"{h5_path.stem}_mf_array.joblib"
-
-        print("\n" + "=" * 80)
-        print("Dataset:", h5_path)
-        print("Output:", out_model)
-        print("=" * 80)
+        method_name = "mf_array_gaussian" if gaussian else "mf_array"
+        output_path = model_dir / f"{h5_path.stem}_{method_name}_{n_repeats}_splits.joblib"
 
         with h5py.File(h5_path, "r") as f:
-            N = f["images"].shape[0]
-            print("images:", f["images"].shape)
-            print("labels:", f["labels"].shape)
-            print("sites:", f["sites"].shape)
+            n_samples = f["images"].shape[0]
 
-        if N < 5:
-            print(f"Skipping {h5_path}: dataset has only {N} images")
+        if n_samples < 5:
+            print(f"Skipping {h5_path}: dataset has only {n_samples} images")
             continue
 
-        rng = np.random.default_rng(seed)
-        idx = rng.permutation(N)
-
-        n_train = int(0.6 * N)
-        n_val = int(0.2 * N)
-
-        train_idx = idx[:n_train]
-        val_idx = idx[n_train:n_train + n_val]
-        test_idx = idx[n_train + n_val:]
-
-        device = get_device()
-
-        print("train/val/test:", len(train_idx), len(val_idx), len(test_idx))
-        print("device:", device)
-
-        mean_image, scale = compute_preprocessing(h5_path, train_idx)
-        print("preprocessing mean image:", mean_image.shape, mean_image.dtype)
-        print("preprocessing scale:", scale)
-
-        trained = mf_array_with_s_sweep(
+        summary = repeated_split_evaluation(
             h5_path=h5_path,
-            train_idx=train_idx,
-            val_idx=val_idx,
+            n_repeats=n_repeats,
+            base_seed=base_seed,
             s_values=s_values,
             alpha=alpha,
             batch_size=batch_size,
             num_workers=num_workers,
             device=device,
-            mean_image=mean_image,
-            scale=scale,
+            gaussian=gaussian,
+            gaussian_normalize=gaussian_normalize,
         )
-
-        test_loader = DataLoader(
-            H5Dataset(h5_path, indices=test_idx, mean_image=mean_image, scale=scale),
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=num_workers,
-            pin_memory=False,
-            persistent_workers=num_workers > 0,
-        )
-
-        test_metrics = evaluate_best_model_array(
-            test_loader,
-            trained,
-            device=device,
-        )
-
-        trained["test_fidelity"] = test_metrics["fidelity"]
-        trained["test_mean_fidelity"] = test_metrics["mean_fidelity"]
-        trained["test_errors_per_site"] = test_metrics["errors_per_site"]
-        trained["test_total_errors"] = test_metrics["total_errors"]
-        trained["test_raw_accuracy"] = test_metrics["raw_accuracy"]
 
         save_obj = {
-            **trained,
-            "h5_path": h5_path,
-            "train_idx": train_idx,
-            "val_idx": val_idx,
-            "test_idx": test_idx,
-            "mean_image": mean_image,
-            "scale": scale,
-            "preprocessing": "subtract_train_mean_image_divide_train_max_abs",
+            **summary,
+            "method": f"{method_name}_repeated_splits",
+            "h5_path": str(h5_path),
+            "s_values": list(s_values),
+            "alpha": alpha,
+            "batch_size": batch_size,
+            "mf_array_gaussian": bool(gaussian),
+            "mf_array_context": "gaussian" if gaussian else "mean",
+            "mf_array_gaussian_normalize": bool(gaussian_normalize),
+            "preprocessing": (
+                "subtract_repeat_train_mean_image_"
+                "divide_repeat_train_max_abs"
+            ),
         }
 
-        joblib.dump(save_obj, out_model)
+        joblib.dump(save_obj, output_path)
 
-        print("\nBest s per site:")
-        print(trained["s"])
-
-        print("\nThreshold per site:")
-        print(trained["threshold"])
-
-        print("\nValidation fidelity per site:")
-        print(trained["val_fidelity"])
-
-        print("\nTest fidelity per site:")
-        print(trained["test_fidelity"])
-        print("Mean test fidelity:", trained["test_mean_fidelity"])
-        print("Test errors per site:", trained["test_errors_per_site"])
-        print("Total test errors:", trained["test_total_errors"])
-
-        print("\nSaved model:", out_model)
+        print(
+            f"Saved {output_path} | "
+            f"mean F={summary['mean_fidelity']:.8f} | "
+            f"SEM={summary['sem_mean_fidelity']:.8f}"
+        )
 
 
 if __name__ == "__main__":
-    main()
+    main(
+        data_dir=Path("/Users/marone/PycharmProjects/neutral-atom-imaging-simulation-main/datasets_20x20"),
+        model_dir=Path("models_20x20"),
+        # data_dir=Path("/Users/marone/PycharmProjects/neutral-atom-imaging-simulation-main/dataset_3x3"),
+        # model_dir=Path("models_3x3"),
+    )

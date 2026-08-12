@@ -7,24 +7,34 @@ import numpy as np
 from matplotlib.ticker import ScalarFormatter
 
 
-MODEL_DIR = Path("data")
-OUTPUT_DIR = Path("models")
+MODEL_DIR = Path("models_3x3")
+OUTPUT_DIR = Path("output_3x3")
 
-METHODS = ["mf_site", "square", "gaussian"]
+# MODEL_DIR = Path("models_20x20")
+# OUTPUT_DIR = Path("output_20x20")
+
+METHODS = ["mf_site", "mf_array", "mf_array_gaussian", "square", "gaussian"]
+THRESHOLD_METHODS = ["mf_site", "mf_array", "mf_array_gaussian"]
 
 METHOD_LABELS = {
     "mf_site": "MF-site",
+    "mf_array": "MF-array",
+    "mf_array_gaussian": "MF-array Gaussian",
     "square": "Square",
     "gaussian": "Gaussian",
 }
 
 METHOD_COLORS = {
     "mf_site": "tab:blue",
+    "mf_array": "tab:red",
+    "mf_array_gaussian": "tab:purple",
     "square": "tab:orange",
     "gaussian": "tab:green",
 }
 
 MODEL_RE = re.compile(r"qubit_dataset_sim_([0-9]+(?:\.[0-9]+)?)_(.+)\.joblib$")
+S_USAGE_VALUES = np.arange(2, 15)
+EXPOSURE_XLIM = (0.010, 0.100)
 
 def make_repeated_record(path, exposure, method, model):
     repeats = model["repeat_results"]
@@ -44,6 +54,7 @@ def make_repeated_record(path, exposure, method, model):
         "exposure": exposure,
         "method": method,
         "s": mean_s_per_site,
+        "s_usage": mean_s_per_site,
         "threshold": mean_threshold_per_site,
         "mean_s": float(np.mean(mean_s_per_site)),
         "std_s": float(np.std(mean_s_per_site)),
@@ -53,6 +64,7 @@ def make_repeated_record(path, exposure, method, model):
         "mean_infidelity": float(1.0 - np.mean(mean_val_fidelity_per_site)),
         "n_sites": int(mean_s_per_site.size),
         "n_repeats": int(s.shape[0]),
+        "is_repeated": True,
     }
 
 def parse_model_name(path):
@@ -64,6 +76,16 @@ def parse_model_name(path):
     method = match.group(2)
 
     return exposure, method
+
+
+def normalize_method(method):
+    if method.startswith("mf_site_") and method.endswith("_splits"):
+        return "mf_site"
+    if method.startswith("mf_array_gaussian_") and method.endswith("_splits"):
+        return "mf_array_gaussian"
+    if method.startswith("mf_array_") and method.endswith("_splits"):
+        return "mf_array"
+    return method
 
 
 def get_val_fidelity(model):
@@ -94,8 +116,7 @@ def collect_records(model_dir):
         model = joblib.load(path)
 
         if "repeat_results" in model:
-            if method.startswith("mf_site_") and method.endswith("_splits"):
-                method = "mf_site"
+            method = normalize_method(method)
 
             if method not in METHODS:
                 continue
@@ -127,6 +148,7 @@ def collect_records(model_dir):
             "mean_threshold": float(np.mean(threshold)),
             "std_threshold": float(np.std(threshold)),
             "n_sites": int(s.size),
+            "is_repeated": False,
         }
 
         if fidelity is not None:
@@ -135,7 +157,23 @@ def collect_records(model_dir):
 
         records.append(record)
 
-    return sorted(records, key=lambda r: (r["method"], r["exposure"]))
+    return prefer_repeated_records(records)
+
+
+def prefer_repeated_records(records):
+    best_by_method_exposure = {}
+
+    for record in records:
+        key = (record["method"], record["exposure"])
+        previous = best_by_method_exposure.get(key)
+
+        if previous is None or (record["is_repeated"] and not previous["is_repeated"]):
+            best_by_method_exposure[key] = record
+
+    return sorted(
+        best_by_method_exposure.values(),
+        key=lambda r: (r["method"], r["exposure"]),
+    )
 
 
 def group_by_method(records):
@@ -149,7 +187,7 @@ def group_by_method(records):
 
 
 def format_log_x_axis(ax):
-    ax.set_xscale("log")
+    ax.set_xscale("linear")
     ax.xaxis.set_major_formatter(ScalarFormatter())
 
 
@@ -186,6 +224,7 @@ def plot_mean_s(records_by_method):
             )
 
     format_log_x_axis(ax)
+    ax.set_xlim(*EXPOSURE_XLIM)
     ax.set_xlabel("Exposure time")
     ax.set_ylabel("Selected window size s")
     ax.set_title("Selected s vs Exposure")
@@ -201,7 +240,8 @@ def plot_mean_s(records_by_method):
 def plot_threshold(records_by_method):
     fig, ax = plt.subplots(figsize=(7.5, 4.8))
 
-    for method, records in records_by_method.items():
+    for method in THRESHOLD_METHODS:
+        records = records_by_method.get(method, [])
         if not records:
             continue
 
@@ -231,6 +271,7 @@ def plot_threshold(records_by_method):
             )
 
     format_log_x_axis(ax)
+    ax.set_xlim(*EXPOSURE_XLIM)
     ax.set_xlabel("Exposure time")
     ax.set_ylabel("Threshold")
     ax.set_title("Threshold vs Exposure")
@@ -270,6 +311,7 @@ def plot_infidelity(records_by_method):
         return
 
     format_log_x_axis(ax)
+    ax.set_xlim(*EXPOSURE_XLIM)
     ax.set_xlabel("Exposure time")
     ax.set_ylabel("1 - validation fidelity")
     ax.set_title("Validation Infidelity vs Exposure")
@@ -283,7 +325,7 @@ def plot_infidelity(records_by_method):
         if "mean_infidelity" in r
     ]
     if all_y and np.all(np.array(all_y) > 0):
-        ax.set_yscale("log")
+        ax.set_yscale("linear")
 
     fig.tight_layout()
     out = OUTPUT_DIR / "infidelity_vs_exposure_all_methods.png"
@@ -314,35 +356,41 @@ def plot_s_usage_heatmaps(records_by_method):
         records = records_by_method[method]
 
         exposures = np.array([r["exposure"] for r in records])
-        all_s = np.array(sorted({int(v) for r in records for v in r["s"]}))
+        all_s = S_USAGE_VALUES
+        y_pos = np.arange(len(all_s))
 
         counts = np.zeros((len(all_s), len(exposures)), dtype=int)
 
         for j, r in enumerate(records):
-            values, value_counts = np.unique(r["s"].astype(int), return_counts=True)
+            s_usage = np.rint(r.get("s_usage", r["s"])).astype(int)
+            s_usage = np.clip(s_usage, all_s[0], all_s[-1])
+            values, value_counts = np.unique(s_usage, return_counts=True)
             for value, count in zip(values, value_counts):
                 i = np.where(all_s == int(value))[0][0]
                 counts[i, j] = count
 
         mesh = ax.pcolormesh(
             exposures,
-            all_s,
+            y_pos,
             counts,
             shading="nearest",
             cmap="viridis",
         )
 
         format_log_x_axis(ax)
+        ax.set_xlim(*EXPOSURE_XLIM)
         ax.set_xlabel("Exposure time")
         ax.set_ylabel("Selected s")
         ax.set_title(f"{METHOD_LABELS[method]}: s Usage")
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(all_s)
 
         for i, s_value in enumerate(all_s):
             for j, exposure in enumerate(exposures):
                 if counts[i, j] > 0:
                     ax.text(
                         exposure,
-                        s_value,
+                        y_pos[i],
                         str(counts[i, j]),
                         ha="center",
                         va="center",

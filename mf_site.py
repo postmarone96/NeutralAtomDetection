@@ -5,6 +5,7 @@ import joblib
 from pathlib import Path
 
 from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
 from utils import (
     get_device, H5Dataset, compute_preprocessing,
     learn_W, calc_score
@@ -28,16 +29,86 @@ def classification_fidelity(scores, y, threshold):
     return fidelity
 
 def best_threshold_by_fidelity(scores, y):
-    best_t = 0.5
-    best_fid = -1.0
+    scores = np.asarray(scores, dtype=np.float64).reshape(-1)
+    target = np.asarray(y).reshape(-1) > 0.5
 
-    for t in np.linspace(0.01, 0.99, 99):
-        fid = classification_fidelity(scores, y, t)
-        if fid > best_fid:
-            best_fid = fid
-            best_t = float(t)
+    finite = np.isfinite(scores)
+    scores = scores[finite]
+    target = target[finite]
+    if scores.size == 0:
+        raise ValueError("cannot choose a threshold from empty/non-finite scores")
 
-    return best_t, best_fid
+    unique_scores, inverse = np.unique(scores, return_inverse=True)
+    n_unique = unique_scores.size
+
+    dark = ~target
+    bright = target
+    n_dark = int(dark.sum())
+    n_bright = int(bright.sum())
+    total_dark = max(n_dark, 1)
+    total_bright = max(n_bright, 1)
+
+    dark_by_score = np.bincount(
+        inverse,
+        weights=dark.astype(np.float64),
+        minlength=n_unique,
+    )
+    bright_by_score = np.bincount(
+        inverse,
+        weights=bright.astype(np.float64),
+        minlength=n_unique,
+    )
+
+    dark_below_threshold = np.concatenate([[0.0], np.cumsum(dark_by_score)])
+    bright_below_threshold = np.concatenate([[0.0], np.cumsum(bright_by_score)])
+
+    false_bright = n_dark - dark_below_threshold
+    false_dark = bright_below_threshold
+    fidelities = 1.0 - 0.5 * (
+        false_bright / total_dark + false_dark / total_bright
+    )
+
+    score_span = float(unique_scores[-1] - unique_scores[0])
+    edge_pad = max(score_span * 1e-6, abs(float(unique_scores[0])) * 1e-6, 1e-12)
+
+    if n_unique == 1:
+        candidate_thresholds = np.array(
+            [unique_scores[0] - edge_pad, unique_scores[0] + edge_pad],
+            dtype=np.float64,
+        )
+    else:
+        midpoint_thresholds = (unique_scores[:-1] + unique_scores[1:]) / 2.0
+        candidate_thresholds = np.concatenate(
+            [
+                [unique_scores[0] - edge_pad],
+                midpoint_thresholds,
+                [unique_scores[-1] + edge_pad],
+            ]
+        )
+
+    best_fid = float(np.max(fidelities))
+    best_indices = np.flatnonzero(
+        np.isclose(fidelities, best_fid, rtol=1e-12, atol=1e-12)
+    )
+
+    run_starts = np.r_[0, np.flatnonzero(np.diff(best_indices) > 1) + 1]
+    run_ends = np.r_[run_starts[1:], best_indices.size]
+    best_run = None
+    best_run_width = -np.inf
+
+    for start, end in zip(run_starts, run_ends):
+        run = best_indices[start:end]
+        width = candidate_thresholds[run[-1]] - candidate_thresholds[run[0]]
+        if width > best_run_width:
+            best_run_width = width
+            best_run = run
+
+    best_t = 0.5 * (
+        candidate_thresholds[best_run[0]]
+        + candidate_thresholds[best_run[-1]]
+    )
+
+    return float(best_t), best_fid
 
 def mf_site_with_s_sweep(
         h5_path,
@@ -74,24 +145,30 @@ def mf_site_with_s_sweep(
         "alpha": alpha,
     }
 
-    for s in s_values:
+    progress = tqdm(s_values, desc="MF-Site s sweep", unit="s", leave=False)
+    for s in progress:
         learned_W = learn_W(train_loader, s=s, alpha=alpha, device=device)
 
         val_scores_all, val_labels_all = calc_score(
             val_loader, s=s, W=learned_W, device=device
         )
 
+        fidelities = np.zeros(n_qubits, dtype=np.float32)
+
         for site_idx in range(n_qubits):
             threshold, fid = best_threshold_by_fidelity(
                 val_scores_all[:, site_idx],
                 val_labels_all[:, site_idx],
             )
+            fidelities[site_idx] = fid
 
             if fid > best["val_fidelity"][site_idx]:
                 best["W"][site_idx] = learned_W[site_idx].cpu()
                 best["s"][site_idx] = s
                 best["threshold"][site_idx] = threshold
                 best["val_fidelity"][site_idx] = fid
+
+        # progress.set_postfix(mean_val_fidelity=f"{np.mean(fidelities):.8f}")
 
     return best
 
@@ -150,7 +227,7 @@ def evaluate_best_model(dataloader, best, device="cpu"):
 
 # def main(data_dir):
 #     # data_dir = Path("/Users/marone/PycharmProjects/neutral-atom-imaging-simulation-main/test_dataset_1")
-#     model_dir = Path("data")
+#     model_dir = Path("models_3x3")
 #     model_dir.mkdir(exist_ok=True)
 #
 #     h5_paths = sorted(data_dir.glob("*.h5"))
@@ -367,16 +444,14 @@ def repeated_split_evaluation(
 ):
     repeat_results = []
 
-    for repeat_idx in range(n_repeats):
+    progress = tqdm(
+        range(n_repeats),
+        desc=f"{h5_path.stem} MF-Site repeats",
+        unit="split",
+        leave=False,
+    )
+    for repeat_idx in progress:
         split_seed = base_seed + repeat_idx
-
-        print("\n" + "#" * 80)
-        print(
-            f"Dataset: {h5_path.name} | "
-            f"repeat {repeat_idx + 1}/{n_repeats} | "
-            f"seed {split_seed}"
-        )
-        print("#" * 80)
 
         result = run_one_split(
             h5_path=h5_path,
@@ -389,9 +464,7 @@ def repeated_split_evaluation(
         )
         repeat_results.append(result)
 
-        print("Per-site test fidelity:")
-        print(result["test_fidelity"])
-        print("Mean across sites:", result["test_mean_fidelity"])
+        # progress.set_postfix(mean_test_fidelity=f"{result['test_mean_fidelity']:.8f}")
 
     # Shape: [repeats, qubits]
     per_site_fidelity = np.stack(
@@ -441,8 +514,7 @@ def repeated_split_evaluation(
 
     return summary
 
-def main(data_dir):
-    model_dir = Path("data")
+def main(data_dir, model_dir):
     model_dir.mkdir(exist_ok=True)
 
     h5_paths = sorted(data_dir.glob("*.h5"))
@@ -455,13 +527,8 @@ def main(data_dir):
     n_repeats = 10
 
     device = get_device()
-    print("Device:", device)
 
     for h5_path in h5_paths:
-        print("\n" + "=" * 80)
-        print("Dataset:", h5_path)
-        print("=" * 80)
-
         with h5py.File(h5_path, "r") as f:
             n_samples = f["images"].shape[0]
 
@@ -502,29 +569,18 @@ def main(data_dir):
 
         joblib.dump(save_obj, output_path)
 
-        print("\nRepeated-split summary")
-        print("----------------------")
-        print("Mean fidelity per site:")
-        print(summary["mean_fidelity_per_site"])
-
-        print("\nStandard deviation per site:")
-        print(summary["std_fidelity_per_site"])
-
-        print("\nStandard error per site:")
-        print(summary["sem_fidelity_per_site"])
-
         print(
-            "\nMean across sites and repeats:",
-            summary["mean_fidelity"],
+            f"Saved {output_path} | "
+            f"mean F={summary['mean_fidelity']:.8f} | "
+            f"SEM={summary['sem_mean_fidelity']:.8f}"
         )
-        print(
-            "SEM of repeat-level site means:",
-            summary["sem_mean_fidelity"],
-        )
-        print("\nSaved:", output_path)
 
 
 if __name__ == "__main__":
     main(
-        data_dir = Path("/Users/marone/PycharmProjects/neutral-atom-imaging-simulation-main/dataset_3x3")
+        # data_dir = Path("/Users/marone/PycharmProjects/neutral-atom-imaging-simulation-main/datasets_40x40"),
+        # data_dir = Path("/Users/marone/PycharmProjects/neutral-atom-imaging-simulation-main/dataset_3x3"),
+        # model_dir = Path("models_3x3"),
+        data_dir=Path("/Users/marone/PycharmProjects/neutral-atom-imaging-simulation-main/datasets_20x20"),
+        model_dir=Path("models_20x20"),
 )
