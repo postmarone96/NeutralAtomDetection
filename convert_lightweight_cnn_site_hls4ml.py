@@ -15,8 +15,10 @@ PROJECT_NAME = "lightweight_cnn_site"
 BACKEND = "Vitis"
 IO_TYPE = "io_parallel"
 DEFAULT_PRECISION = "ap_fixed<16,6>"
-REUSE_FACTOR = 1
+REUSE_FACTOR = 64
 STRATEGY = "Resource"
+TARGET_PART = "xc7z020clg400-1"
+CLOCK_PERIOD_NS = 10
 
 N_VALIDATION_CROPS = 128
 VALIDATION_H5_PATH = None
@@ -259,15 +261,19 @@ def make_hls_config(hls4ml, model, crop_size):
 
 
 def convert_model(hls4ml, model, config, crop_size):
-    return hls4ml.converters.convert_from_pytorch_model(
-        model,
-        input_shape=(1, crop_size, crop_size),
-        hls_config=config,
-        output_dir=str(HLS_OUTPUT_DIR),
-        project_name=PROJECT_NAME,
-        backend=BACKEND,
-        io_type=IO_TYPE,
-    )
+    conversion_kwargs = {
+        "input_shape": (1, crop_size, crop_size),
+        "hls_config": config,
+        "output_dir": str(HLS_OUTPUT_DIR),
+        "project_name": PROJECT_NAME,
+        "backend": BACKEND,
+        "io_type": IO_TYPE,
+        "clock_period": CLOCK_PERIOD_NS,
+    }
+    if TARGET_PART is not None:
+        conversion_kwargs["part"] = TARGET_PART
+
+    return hls4ml.converters.convert_from_pytorch_model(model, **conversion_kwargs)
 
 
 def maybe_run_synthesis(hls_model):
@@ -290,6 +296,8 @@ def main():
     print(f"  crop size:            {crop_size}x{crop_size}")
     print(f"  parameters:           {count_parameters(model):,}")
     print(f"  backend:              {BACKEND}")
+    print(f"  target part:          {TARGET_PART or 'hls4ml default'}")
+    print(f"  clock period:         {CLOCK_PERIOD_NS} ns")
     print(f"  io_type:              {IO_TYPE}")
     print(f"  precision:            {DEFAULT_PRECISION}")
     print(f"  reuse factor:         {REUSE_FACTOR}")
