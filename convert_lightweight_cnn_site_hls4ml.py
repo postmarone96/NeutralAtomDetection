@@ -1,4 +1,5 @@
 from pathlib import Path
+import shutil
 
 import joblib
 import numpy as np
@@ -23,6 +24,7 @@ LAYER_REUSE_FACTORS = {
     "features_0": 72,
     "features_3": 72,
     "features_6": 72,
+    "classifier_0": 64,
     "classifier_2": 16,
 }
 
@@ -35,6 +37,7 @@ WRITE_PROJECT = True
 RUN_HLS_COMPILE = False
 RUN_HLS_PREDICT = False
 RUN_SYNTHESIS = False
+WRITE_VITIS_CONFIG = True
 
 
 def import_hls4ml():
@@ -289,6 +292,43 @@ def convert_model(hls4ml, model, config, crop_size):
     return hls4ml.converters.convert_from_pytorch_model(model, **conversion_kwargs)
 
 
+def mirror_runtime_weights():
+    source = HLS_OUTPUT_DIR / "firmware" / "weights"
+    destination = HLS_OUTPUT_DIR / "weights"
+    if not source.exists():
+        print(f"Runtime weights not found, skipping mirror: {source}")
+        return
+
+    shutil.copytree(source, destination, dirs_exist_ok=True)
+    print(f"Mirrored runtime weights: {destination}")
+
+
+def write_vitis_hls_config():
+    if not WRITE_VITIS_CONFIG:
+        return
+
+    config_path = HLS_OUTPUT_DIR / "hls_config.cfg"
+    part = TARGET_PART or "xc7z020clg400-1"
+    config_text = f"""part={part}
+
+[hls]
+flow_target=vivado
+package.output.format=ip_catalog
+package.output.syn=false
+syn.top={PROJECT_NAME}
+syn.file=firmware/{PROJECT_NAME}.cpp
+syn.cflags=-Ifirmware -Ifirmware/nnet_utils -Ifirmware/weights
+tb.file={PROJECT_NAME}_test.cpp
+tb.file=tb_data
+tb.file=weights
+tb.cflags=-Ifirmware -Ifirmware/nnet_utils -Ifirmware/weights
+clock={CLOCK_PERIOD_NS}ns
+csim.code_analyzer=1
+"""
+    config_path.write_text(config_text, encoding="utf-8")
+    print(f"Wrote Vitis HLS config: {config_path}")
+
+
 def maybe_run_synthesis(hls_model):
     if not RUN_SYNTHESIS:
         return
@@ -323,6 +363,8 @@ def main():
     if WRITE_PROJECT:
         print("Writing hls4ml project.")
         hls_model.write()
+        mirror_runtime_weights()
+        write_vitis_hls_config()
 
     if RUN_HLS_COMPILE:
         print("Compiling hls4ml C simulation library.")
