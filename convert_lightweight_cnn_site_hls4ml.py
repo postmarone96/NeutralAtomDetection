@@ -29,6 +29,7 @@ LAYER_REUSE_FACTORS = {
 }
 
 N_VALIDATION_CROPS = 128
+N_TESTBENCH_CROPS = 5
 VALIDATION_H5_PATH = None
 VALIDATION_INDICES = None
 RANDOM_VALIDATION_SEED = 42
@@ -38,6 +39,7 @@ RUN_HLS_COMPILE = False
 RUN_HLS_PREDICT = False
 RUN_SYNTHESIS = False
 WRITE_VITIS_CONFIG = True
+WRITE_TESTBENCH_DATA = True
 
 
 def import_hls4ml():
@@ -329,6 +331,36 @@ csim.code_analyzer=1
     print(f"Wrote Vitis HLS config: {config_path}")
 
 
+def write_matrix(path, values):
+    values = np.asarray(values, dtype=np.float32)
+    with Path(path).open("w", encoding="utf-8") as file:
+        for row in values:
+            file.write(" ".join(f"{float(value):.10g}" for value in row))
+            file.write("\n")
+
+
+def write_testbench_data(checkpoint, model, crop_size):
+    if not WRITE_TESTBENCH_DATA:
+        return
+
+    crops, _, validation_source = make_validation_crops(checkpoint, crop_size)
+    crops = crops[:N_TESTBENCH_CROPS].astype(np.float32, copy=False)
+    predictions = torch_predict(model, crops).astype(np.float32, copy=False)
+
+    tb_data_dir = HLS_OUTPUT_DIR / "tb_data"
+    tb_data_dir.mkdir(parents=True, exist_ok=True)
+
+    input_path = tb_data_dir / "tb_input_features.dat"
+    prediction_path = tb_data_dir / "tb_output_predictions.dat"
+
+    write_matrix(input_path, crops.reshape(crops.shape[0], -1))
+    write_matrix(prediction_path, predictions.reshape(predictions.shape[0], -1))
+
+    print(f"Wrote testbench inputs: {input_path}")
+    print(f"Wrote testbench predictions: {prediction_path}")
+    print(f"  testbench crops:      {crops.shape[0]} from {validation_source}")
+
+
 def maybe_run_synthesis(hls_model):
     if not RUN_SYNTHESIS:
         return
@@ -364,6 +396,7 @@ def main():
         print("Writing hls4ml project.")
         hls_model.write()
         mirror_runtime_weights()
+        write_testbench_data(checkpoint, model, crop_size)
         write_vitis_hls_config()
 
     if RUN_HLS_COMPILE:
