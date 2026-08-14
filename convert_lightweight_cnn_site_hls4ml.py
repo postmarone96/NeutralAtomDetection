@@ -1,4 +1,6 @@
 from pathlib import Path
+from contextlib import contextmanager
+import os
 import shutil
 
 import joblib
@@ -10,7 +12,7 @@ from lightweight_cnn_site import LIGHTWEIGHT_CNN_SITE_ARCHITECTURE, LightweightC
 
 
 MODEL_PATH = Path("models_3x3/qubit_dataset_sim_0.043_lightweight_cnn_site.joblib")
-HLS_OUTPUT_DIR = Path("lightweight_cnn_site_30ms")
+HLS_OUTPUT_DIR = Path("lightweight_cnn_site_30ms").resolve()
 PROJECT_NAME = "lightweight_cnn_site"
 
 BACKEND = "Vitis"
@@ -46,6 +48,16 @@ RUN_SYNTHESIS = False
 WRITE_VITIS_CONFIG = True
 WRITE_TESTBENCH_DATA = True
 CLEAN_OUTPUT_DIR = True
+
+
+@contextmanager
+def working_directory(path):
+    old_cwd = Path.cwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(old_cwd)
 
 
 def import_hls4ml():
@@ -246,6 +258,18 @@ def normalize_hls_predictions(predictions):
     return predictions
 
 
+def hls_runtime_weights_dir():
+    weights_dir = HLS_OUTPUT_DIR / "firmware" / "weights"
+    if not weights_dir.exists():
+        raise FileNotFoundError(f"hls4ml runtime weights dir not found: {weights_dir}")
+    return weights_dir
+
+
+def hls_predict(hls_model, hls_input):
+    with working_directory(hls_runtime_weights_dir()):
+        return hls_model.predict(hls_input)
+
+
 def hls_predict_with_layout_fallback(hls_model, crops_nchw):
     attempts = [
         ("NCHW", crops_nchw),
@@ -255,7 +279,7 @@ def hls_predict_with_layout_fallback(hls_model, crops_nchw):
     errors = []
     for layout_name, hls_input in attempts:
         try:
-            predictions = normalize_hls_predictions(hls_model.predict(hls_input))
+            predictions = normalize_hls_predictions(hls_predict(hls_model, hls_input))
             return predictions, layout_name
         except Exception as exc:
             errors.append(f"{layout_name}: {exc}")
@@ -276,7 +300,7 @@ def hls_predict_best_layout(hls_model, crops_nchw, torch_logits):
     errors = []
     for layout_name, hls_input in attempts:
         try:
-            raw_predictions = hls_model.predict(hls_input)
+            raw_predictions = hls_predict(hls_model, hls_input)
             predictions = normalize_hls_predictions(raw_predictions)
             print(
                 f"  layout check {layout_name}: raw output shape "
@@ -363,7 +387,8 @@ def trace_hls_layers(hls_model, model, crops_nchw, layout_name):
 
     print("Tracing hls4ml layers.")
     try:
-        trace_result = hls_model.trace(hls_input)
+        with working_directory(hls_runtime_weights_dir()):
+            trace_result = hls_model.trace(hls_input)
     except Exception as exc:
         print(f"  trace failed: {exc}")
         return
@@ -604,6 +629,7 @@ def main():
         mirror_runtime_weights()
         write_testbench_data(checkpoint, model, crop_size)
         write_vitis_hls_config()
+        print(f"hls4ml runtime cwd:     {hls_runtime_weights_dir()}")
 
     if RUN_HLS_COMPILE:
         print("Compiling hls4ml C simulation library.")
