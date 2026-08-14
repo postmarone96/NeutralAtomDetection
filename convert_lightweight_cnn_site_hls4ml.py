@@ -15,7 +15,9 @@ PROJECT_NAME = "lightweight_cnn_site"
 
 BACKEND = "Vitis"
 IO_TYPE = "io_parallel"
-DEFAULT_PRECISION = "ap_fixed<16,6>"
+DEFAULT_PRECISION = "ap_fixed<32,16>"
+# Use a wider precision such as "ap_fixed<32,16>" first when debugging
+# PyTorch-vs-hls4ml mismatches. Then reduce precision after outputs match.
 REUSE_FACTOR = 72
 STRATEGY = "Resource"
 TARGET_PART = "xc7z020clg400-1"
@@ -215,6 +217,45 @@ def hls_predict_with_layout_fallback(hls_model, crops_nchw):
     )
 
 
+def hls_predict_best_layout(hls_model, crops_nchw, torch_logits):
+    attempts = [
+        ("NCHW", crops_nchw),
+        ("NHWC", np.transpose(crops_nchw, (0, 2, 3, 1))),
+    ]
+
+    results = []
+    errors = []
+    for layout_name, hls_input in attempts:
+        try:
+            predictions = hls_model.predict(hls_input)
+            if isinstance(predictions, list):
+                predictions = predictions[0]
+            predictions = np.asarray(predictions)
+            if predictions.ndim == 1:
+                predictions = predictions.reshape(-1, 2)
+
+            n_outputs = min(torch_logits.shape[0], predictions.shape[0])
+            mean_logit_diff = float(
+                np.mean(np.abs(torch_logits[:n_outputs] - predictions[:n_outputs]))
+            )
+            results.append((mean_logit_diff, layout_name, predictions))
+        except Exception as exc:
+            errors.append(f"{layout_name}: {exc}")
+
+    if not results:
+        raise RuntimeError(
+            "hls_model.predict failed for both tensor layouts:\n"
+            + "\n".join(f"  {error}" for error in errors)
+        )
+
+    for mean_logit_diff, layout_name, _predictions in results:
+        print(f"  layout check {layout_name}: mean |logit diff| = {mean_logit_diff:.6g}")
+
+    results.sort(key=lambda item: item[0])
+    mean_logit_diff, layout_name, predictions = results[0]
+    return predictions, layout_name
+
+
 def compare_outputs(torch_logits, hls_logits, labels=None):
     n_outputs = min(torch_logits.shape[0], hls_logits.shape[0])
     torch_logits = torch_logits[:n_outputs]
@@ -408,7 +449,7 @@ def main():
         print(f"Validation input:       {validation_source}")
 
         torch_logits = torch_predict(model, crops)
-        hls_logits, layout_name = hls_predict_with_layout_fallback(hls_model, crops)
+        hls_logits, layout_name = hls_predict_best_layout(hls_model, crops, torch_logits)
         print(f"hls4ml predict layout:  {layout_name}")
         compare_outputs(torch_logits, hls_logits, labels=labels)
 
