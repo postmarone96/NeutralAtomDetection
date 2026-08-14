@@ -10,11 +10,12 @@ from lightweight_cnn_site import LIGHTWEIGHT_CNN_SITE_ARCHITECTURE, LightweightC
 
 
 MODEL_PATH = Path("models_3x3/qubit_dataset_sim_0.043_lightweight_cnn_site.joblib")
-HLS_OUTPUT_DIR = Path("hls4ml_projects/lightweight_cnn_site_30ms")
+HLS_OUTPUT_DIR = Path("lightweight_cnn_site_30ms")
 PROJECT_NAME = "lightweight_cnn_site"
 
 BACKEND = "Vitis"
 IO_TYPE = "io_parallel"
+CHANNELS_LAST_CONVERSION = "full"
 DEFAULT_PRECISION = "ap_fixed<32,16>"
 # Use a wider precision such as "ap_fixed<32,16>" first when debugging
 # PyTorch-vs-hls4ml mismatches. Then reduce precision after outputs match.
@@ -39,6 +40,8 @@ RANDOM_VALIDATION_SEED = 42
 WRITE_PROJECT = True
 RUN_HLS_COMPILE = True
 RUN_HLS_PREDICT = True
+RUN_HLS_TRACE = True
+N_TRACE_CROPS = 4
 RUN_SYNTHESIS = False
 WRITE_VITIS_CONFIG = True
 WRITE_TESTBENCH_DATA = True
@@ -193,6 +196,39 @@ def torch_predict(model, crops_nchw):
     return logits
 
 
+def torch_layer_trace(model, crops_nchw):
+    x = torch.from_numpy(crops_nchw).float()
+    outputs = {}
+
+    with torch.no_grad():
+        x = model.features[0](x)
+        outputs["features_0"] = x.detach().cpu().numpy()
+        x = model.features[1](x)
+        outputs["features_1"] = x.detach().cpu().numpy()
+        x = model.features[2](x)
+        outputs["features_2"] = x.detach().cpu().numpy()
+        x = model.features[3](x)
+        outputs["features_3"] = x.detach().cpu().numpy()
+        x = model.features[4](x)
+        outputs["features_4"] = x.detach().cpu().numpy()
+        x = model.features[5](x)
+        outputs["features_5"] = x.detach().cpu().numpy()
+        x = model.features[6](x)
+        outputs["features_6"] = x.detach().cpu().numpy()
+        x = model.features[7](x)
+        outputs["features_7"] = x.detach().cpu().numpy()
+        x = model.features[8](x)
+        outputs["features_8"] = x.detach().cpu().numpy()
+        x = model.classifier[0](x)
+        outputs["classifier_0"] = x.detach().cpu().numpy()
+        x = model.classifier[1](x)
+        outputs["classifier_1"] = x.detach().cpu().numpy()
+        x = model.classifier[2](x)
+        outputs["classifier_2"] = x.detach().cpu().numpy()
+
+    return outputs
+
+
 def normalize_hls_predictions(predictions):
     if isinstance(predictions, list):
         predictions = predictions[0]
@@ -270,6 +306,92 @@ def hls_predict_best_layout(hls_model, crops_nchw, torch_logits):
     return predictions, layout_name
 
 
+def make_hls_input(crops_nchw, layout_name):
+    if layout_name == "NCHW":
+        return crops_nchw
+    if layout_name == "NHWC":
+        return np.transpose(crops_nchw, (0, 2, 3, 1))
+    raise ValueError(f"unknown HLS input layout: {layout_name}")
+
+
+def array_range_text(values):
+    values = np.asarray(values)
+    return (
+        f"shape={values.shape}, "
+        f"range=[{np.min(values):.6g}, {np.max(values):.6g}], "
+        f"mean|x|={np.mean(np.abs(values)):.6g}"
+    )
+
+
+def best_trace_diff(torch_values, hls_values):
+    torch_values = np.asarray(torch_values)
+    hls_values = np.asarray(hls_values)
+    candidates = []
+
+    if hls_values.shape == torch_values.shape:
+        candidates.append(("same", hls_values, torch_values))
+
+    if hls_values.ndim == 4 and torch_values.ndim == 4:
+        hls_nchw = np.transpose(hls_values, (0, 3, 1, 2))
+        if hls_nchw.shape == torch_values.shape:
+            candidates.append(("hls NHWC -> NCHW", hls_nchw, torch_values))
+
+        torch_nhwc = np.transpose(torch_values, (0, 2, 3, 1))
+        if hls_values.shape == torch_nhwc.shape:
+            candidates.append(("torch NCHW -> NHWC", hls_values, torch_nhwc))
+
+    if hls_values.size == torch_values.size:
+        candidates.append(("flat", hls_values.reshape(-1), torch_values.reshape(-1)))
+
+    if not candidates:
+        return None, None
+
+    best_name, best_hls, best_torch = min(
+        candidates,
+        key=lambda item: float(np.mean(np.abs(item[1] - item[2]))),
+    )
+    return best_name, float(np.mean(np.abs(best_hls - best_torch)))
+
+
+def trace_hls_layers(hls_model, model, crops_nchw, layout_name):
+    if not RUN_HLS_TRACE:
+        return
+
+    trace_crops = crops_nchw[:N_TRACE_CROPS]
+    hls_input = make_hls_input(trace_crops, layout_name)
+    torch_trace = torch_layer_trace(model, trace_crops)
+
+    print("Tracing hls4ml layers.")
+    try:
+        trace_result = hls_model.trace(hls_input)
+    except Exception as exc:
+        print(f"  trace failed: {exc}")
+        return
+
+    if isinstance(trace_result, tuple) and len(trace_result) == 2:
+        _predictions, hls_trace = trace_result
+    else:
+        hls_trace = trace_result
+
+    if not isinstance(hls_trace, dict):
+        print(f"  unexpected trace output type: {type(hls_trace).__name__}")
+        return
+
+    print("HLS trace summary:")
+    for layer_name, hls_values in hls_trace.items():
+        hls_values = np.asarray(hls_values)
+        print(f"  {layer_name}: {array_range_text(hls_values)}")
+        if layer_name in torch_trace:
+            compare_mode, mean_diff = best_trace_diff(torch_trace[layer_name], hls_values)
+            if mean_diff is None:
+                print(
+                    "    torch compare: shape mismatch "
+                    f"torch={torch_trace[layer_name].shape}, hls={hls_values.shape}"
+                )
+            else:
+                print(f"    torch compare: mean |diff|={mean_diff:.6g} ({compare_mode})")
+
+
 def compare_outputs(torch_logits, hls_logits, labels=None):
     n_outputs = min(torch_logits.shape[0], hls_logits.shape[0])
     torch_logits = torch_logits[:n_outputs]
@@ -320,7 +442,6 @@ def compare_outputs(torch_logits, hls_logits, labels=None):
 
 def make_hls_config(hls4ml, model, crop_size):
     input_shape = (1, crop_size, crop_size)
-    channels_last_conversion = "internal" if IO_TYPE == "io_stream" else "full"
 
     config = hls4ml.utils.config_from_pytorch_model(
         model,
@@ -329,12 +450,14 @@ def make_hls_config(hls4ml, model, crop_size):
         backend=BACKEND,
         default_precision=DEFAULT_PRECISION,
         default_reuse_factor=REUSE_FACTOR,
-        channels_last_conversion=channels_last_conversion,
+        channels_last_conversion=CHANNELS_LAST_CONVERSION,
     )
 
     config.setdefault("Model", {})
     config["Model"]["Strategy"] = STRATEGY
     config["Model"]["ReuseFactor"] = int(REUSE_FACTOR)
+    if RUN_HLS_TRACE:
+        config["Model"]["Trace"] = True
 
     layer_config = config.get("LayerName", {})
     for layer_name, reuse_factor in LAYER_REUSE_FACTORS.items():
@@ -342,7 +465,17 @@ def make_hls_config(hls4ml, model, crop_size):
             layer_config[layer_name]["ReuseFactor"] = int(reuse_factor)
             layer_config[layer_name]["Strategy"] = STRATEGY
 
+    if RUN_HLS_TRACE:
+        for values in layer_config.values():
+            values["Trace"] = True
+
     return config
+
+
+def print_hls_config_summary(config):
+    layer_config = config.get("LayerName", {})
+    print(f"  channels conversion:  {CHANNELS_LAST_CONVERSION}")
+    print(f"  hls config layers:    {list(layer_config.keys())}")
 
 
 def convert_model(hls4ml, model, config, crop_size):
@@ -451,6 +584,7 @@ def main():
     print(f"  target part:          {TARGET_PART or 'hls4ml default'}")
     print(f"  clock period:         {CLOCK_PERIOD_NS} ns")
     print(f"  io_type:              {IO_TYPE}")
+    print(f"  channels conversion:  {CHANNELS_LAST_CONVERSION}")
     print(f"  precision:            {DEFAULT_PRECISION}")
     print(f"  reuse factor:         {REUSE_FACTOR}")
     print(f"  layer reuse factors:  {LAYER_REUSE_FACTORS}")
@@ -461,6 +595,7 @@ def main():
         shutil.rmtree(HLS_OUTPUT_DIR)
 
     config = make_hls_config(hls4ml, model, crop_size)
+    print_hls_config_summary(config)
     hls_model = convert_model(hls4ml, model, config, crop_size)
 
     if WRITE_PROJECT:
@@ -477,11 +612,13 @@ def main():
     if RUN_HLS_PREDICT:
         crops, labels, validation_source = make_validation_crops(checkpoint, crop_size)
         print(f"Validation input:       {validation_source}")
+        print(f"  crop tensor:          {array_range_text(crops)}")
 
         torch_logits = torch_predict(model, crops)
         hls_logits, layout_name = hls_predict_best_layout(hls_model, crops, torch_logits)
         print(f"hls4ml predict layout:  {layout_name}")
         compare_outputs(torch_logits, hls_logits, labels=labels)
+        trace_hls_layers(hls_model, model, crops, layout_name)
 
     maybe_run_synthesis(hls_model)
 
