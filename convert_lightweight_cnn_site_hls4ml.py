@@ -42,6 +42,7 @@ RUN_HLS_PREDICT = True
 RUN_SYNTHESIS = False
 WRITE_VITIS_CONFIG = True
 WRITE_TESTBENCH_DATA = True
+CLEAN_OUTPUT_DIR = True
 
 
 def import_hls4ml():
@@ -192,6 +193,23 @@ def torch_predict(model, crops_nchw):
     return logits
 
 
+def normalize_hls_predictions(predictions):
+    if isinstance(predictions, list):
+        predictions = predictions[0]
+    predictions = np.asarray(predictions)
+    predictions = np.squeeze(predictions)
+
+    if predictions.ndim == 1:
+        predictions = predictions.reshape(-1, 2)
+    elif predictions.ndim > 2:
+        predictions = predictions.reshape(predictions.shape[0], -1)
+
+    if predictions.shape[-1] != 2:
+        raise ValueError(f"expected 2 output logits, got shape {predictions.shape}")
+
+    return predictions
+
+
 def hls_predict_with_layout_fallback(hls_model, crops_nchw):
     attempts = [
         ("NCHW", crops_nchw),
@@ -201,12 +219,7 @@ def hls_predict_with_layout_fallback(hls_model, crops_nchw):
     errors = []
     for layout_name, hls_input in attempts:
         try:
-            predictions = hls_model.predict(hls_input)
-            if isinstance(predictions, list):
-                predictions = predictions[0]
-            predictions = np.asarray(predictions)
-            if predictions.ndim == 1:
-                predictions = predictions.reshape(-1, 2)
+            predictions = normalize_hls_predictions(hls_model.predict(hls_input))
             return predictions, layout_name
         except Exception as exc:
             errors.append(f"{layout_name}: {exc}")
@@ -227,12 +240,13 @@ def hls_predict_best_layout(hls_model, crops_nchw, torch_logits):
     errors = []
     for layout_name, hls_input in attempts:
         try:
-            predictions = hls_model.predict(hls_input)
-            if isinstance(predictions, list):
-                predictions = predictions[0]
-            predictions = np.asarray(predictions)
-            if predictions.ndim == 1:
-                predictions = predictions.reshape(-1, 2)
+            raw_predictions = hls_model.predict(hls_input)
+            predictions = normalize_hls_predictions(raw_predictions)
+            print(
+                f"  layout check {layout_name}: raw output shape "
+                f"{np.asarray(raw_predictions[0] if isinstance(raw_predictions, list) else raw_predictions).shape}, "
+                f"normalized {predictions.shape}"
+            )
 
             n_outputs = min(torch_logits.shape[0], predictions.shape[0])
             mean_logit_diff = float(
@@ -269,6 +283,16 @@ def compare_outputs(torch_logits, hls_logits, labels=None):
 
     print("Validation comparison:")
     print(f"  compared crops:        {n_outputs}")
+    print(f"  torch logits shape:    {torch_logits.shape}")
+    print(f"  hls logits shape:      {hls_logits.shape}")
+    print(
+        "  torch logits range:    "
+        f"[{np.min(torch_logits):.6g}, {np.max(torch_logits):.6g}]"
+    )
+    print(
+        "  hls logits range:      "
+        f"[{np.min(hls_logits):.6g}, {np.max(hls_logits):.6g}]"
+    )
     print(f"  max |logit diff|:      {np.max(np.abs(torch_logits - hls_logits)):.6g}")
     print(f"  mean |logit diff|:     {np.mean(np.abs(torch_logits - hls_logits)):.6g}")
     print(
@@ -279,6 +303,8 @@ def compare_outputs(torch_logits, hls_logits, labels=None):
         "  class disagreement:    "
         f"{np.mean(torch_classes != hls_classes) * 100.0:.3f}%"
     )
+    print(f"  torch class counts:    {np.bincount(torch_classes, minlength=2).tolist()}")
+    print(f"  hls class counts:      {np.bincount(hls_classes, minlength=2).tolist()}")
 
     if labels is not None:
         labels = labels[:n_outputs]
@@ -429,6 +455,10 @@ def main():
     print(f"  reuse factor:         {REUSE_FACTOR}")
     print(f"  layer reuse factors:  {LAYER_REUSE_FACTORS}")
     print(f"  output dir:           {HLS_OUTPUT_DIR}")
+
+    if CLEAN_OUTPUT_DIR and HLS_OUTPUT_DIR.exists():
+        print(f"Cleaning existing hls4ml output dir: {HLS_OUTPUT_DIR}")
+        shutil.rmtree(HLS_OUTPUT_DIR)
 
     config = make_hls_config(hls4ml, model, crop_size)
     hls_model = convert_model(hls4ml, model, config, crop_size)
