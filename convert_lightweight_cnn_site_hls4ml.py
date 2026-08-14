@@ -12,7 +12,7 @@ from lightweight_cnn_site import LIGHTWEIGHT_CNN_SITE_ARCHITECTURE, LightweightC
 
 
 MODEL_PATH = Path("models_3x3/qubit_dataset_sim_0.043_lightweight_cnn_site.joblib")
-HLS_OUTPUT_DIR = Path("lightweight_cnn_site_30ms").resolve()
+HLS_OUTPUT_DIR = Path("lightweight_cnn_site_43ms").resolve()
 PROJECT_NAME = "lightweight_cnn_site"
 
 BACKEND = "Vitis"
@@ -26,11 +26,17 @@ STRATEGY = "Resource"
 TARGET_PART = "xc7z020clg400-1"
 CLOCK_PERIOD_NS = 10
 LAYER_REUSE_FACTORS = {
-    "features_0": 72,
+    "features_0": 9,
     "features_3": 72,
     "features_6": 72,
     "classifier_0": 64,
     "classifier_2": 16,
+}
+
+CONV_RESOURCE_REUSE_LIMITS = {
+    "features_0": 3 * 3 * 1,
+    "features_3": 3 * 3 * 8,
+    "features_6": 3 * 3 * 16,
 }
 
 N_VALIDATION_CROPS = 128
@@ -481,6 +487,8 @@ def make_hls_config(hls4ml, model, crop_size):
     config.setdefault("Model", {})
     config["Model"]["Strategy"] = STRATEGY
     config["Model"]["ReuseFactor"] = int(REUSE_FACTOR)
+    config["Model"].setdefault("Precision", {})
+    config["Model"]["Precision"]["default"] = DEFAULT_PRECISION
     if RUN_HLS_TRACE:
         config["Model"]["Trace"] = True
 
@@ -495,6 +503,20 @@ def make_hls_config(hls4ml, model, crop_size):
             values["Trace"] = True
 
     return config
+
+
+def validate_hls_config():
+    if STRATEGY != "Resource" or IO_TYPE != "io_parallel":
+        return
+
+    for layer_name, max_reuse_factor in CONV_RESOURCE_REUSE_LIMITS.items():
+        reuse_factor = int(LAYER_REUSE_FACTORS.get(layer_name, REUSE_FACTOR))
+        if reuse_factor > max_reuse_factor:
+            raise ValueError(
+                f"{layer_name} reuse_factor={reuse_factor} is invalid for "
+                f"io_parallel Resource Conv2D. It must be <= {max_reuse_factor} "
+                "(kernel_height * kernel_width * input_channels)."
+            )
 
 
 def print_hls_config_summary(config):
@@ -614,6 +636,8 @@ def main():
     print(f"  reuse factor:         {REUSE_FACTOR}")
     print(f"  layer reuse factors:  {LAYER_REUSE_FACTORS}")
     print(f"  output dir:           {HLS_OUTPUT_DIR}")
+
+    validate_hls_config()
 
     if CLEAN_OUTPUT_DIR and HLS_OUTPUT_DIR.exists():
         print(f"Cleaning existing hls4ml output dir: {HLS_OUTPUT_DIR}")
