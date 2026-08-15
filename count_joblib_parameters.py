@@ -4,8 +4,8 @@ import joblib
 import torch
 
 
-MODEL_DIR = Path("models_3x3")
-PATTERNS = (
+model_dir = Path("models_3x3")
+patterns = (
     "*cnn_site*.joblib",
 )
 
@@ -42,7 +42,7 @@ def unique_paths(model_dir, patterns):
     return paths
 
 
-def main(model_dir=MODEL_DIR, patterns=PATTERNS, show_tensors=False):
+def main(model_dir=model_dir, patterns=patterns, show_tensors=False):
     paths = unique_paths(model_dir, patterns)
     if not paths:
         raise FileNotFoundError(f"no joblib files matched {patterns} in {model_dir}")

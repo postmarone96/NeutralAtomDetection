@@ -1,4 +1,3 @@
-import argparse
 import re
 from pathlib import Path
 
@@ -12,17 +11,28 @@ from mf_site import calc_best_scores
 from utils import H5Dataset
 
 
-MODEL_RE = re.compile(r"qubit_dataset_sim_([0-9]+(?:\.[0-9]+)?)_(.+)\.joblib$")
-DEFAULT_DATA_DIR = Path(
+model_re = re.compile(r"qubit_dataset_sim_([0-9]+(?:\.[0-9]+)?)_(.+)\.joblib$")
+default_data_dir = Path(
     "/Users/marone/PycharmProjects/"
     "neutral-atom-imaging-simulation-main/dataset_3x3"
 )
 
 default_model = Path("/Users/marone/PycharmProjects/NeutralAtomDetection/models_3x3/qubit_dataset_sim_0.062_mf_site_10_splits.joblib")
 
+model_path = default_model
+output_dir = Path("output_3x3/threshold_shift_tradeoffs")
+batch_size = 500
+num_workers = 0
+device = "cpu"
+n_shifts = 201
+shift_min = None
+shift_max = None
+max_repeats = None
+show = False
+
 
 def parse_model_name(path):
-    match = MODEL_RE.fullmatch(path.name)
+    match = model_re.fullmatch(path.name)
     if match is None:
         return None
     return float(match.group(1)), match.group(2)
@@ -334,56 +344,25 @@ def plot_tradeoff(model_path, collected, shifts, output_path):
     }
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description=(
-            "Plot how false-bright and false-dark errors change when the saved "
-            "MF threshold is shifted."
-        )
-    )
-    parser.add_argument("--model", type=Path, default=default_model)
-    parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=Path("output_3x3/threshold_shift_tradeoffs"),
-    )
-    parser.add_argument("--batch-size", type=int, default=500)
-    parser.add_argument("--num-workers", type=int, default=0)
-    parser.add_argument("--device", default="cpu")
-    parser.add_argument("--n-shifts", type=int, default=201)
-    parser.add_argument("--shift-min", type=float, default=None)
-    parser.add_argument("--shift-max", type=float, default=None)
-    parser.add_argument(
-        "--max-repeats",
-        type=int,
-        default=None,
-        help="Limit repeated-split models for a quick diagnostic.",
-    )
-    parser.add_argument("--show", action="store_true")
-    return parser.parse_args()
-
-
 def main():
-    args = parse_args()
     collected = collect_scores(
-        model_path=args.model,
-        data_dir=args.data_dir,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        device=args.device,
-        max_repeats=args.max_repeats,
+        model_path=model_path,
+        data_dir=default_data_dir,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        device=device,
+        max_repeats=max_repeats,
     )
 
-    if args.shift_min is None or args.shift_max is None:
-        shifts = default_shifts(collected["margins"], args.n_shifts)
+    if shift_min is None or shift_max is None:
+        shifts = default_shifts(collected["margins"], n_shifts)
     else:
-        shifts = np.linspace(args.shift_min, args.shift_max, args.n_shifts)
+        shifts = np.linspace(shift_min, shift_max, n_shifts)
 
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = args.output_dir / f"{args.model.stem}_threshold_shift_tradeoff.png"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"{model_path.stem}_threshold_shift_tradeoff.png"
 
-    summary = plot_tradeoff(args.model, collected, shifts, output_path)
+    summary = plot_tradeoff(model_path, collected, shifts, output_path)
     print(f"Saved plot: {summary['output_path']}")
     print(
         "saved threshold: "
@@ -398,7 +377,7 @@ def main():
         f"F={summary['best_shift_fidelity']:.6f}"
     )
 
-    if args.show:
+    if show:
         plt.show()
     else:
         plt.close("all")

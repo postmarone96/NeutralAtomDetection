@@ -1,4 +1,3 @@
-import argparse
 from pathlib import Path
 
 import h5py
@@ -14,10 +13,17 @@ from baselines import (
 )
 
 
-DEFAULT_H5_PATH = Path(
+default_h5_path = Path(
     "/Users/marone/PycharmProjects/neutral-atom-imaging-simulation-main/"
     "test_dataset_1/qubit_dataset_sim_0.01.h5"
 )
+
+site_index = 0
+fit_size = 6
+seed = 42
+batch_size = 500
+num_workers = 2
+output_dir = Path("output_3x3")
 
 
 def split_indices(n, seed=42):
@@ -183,61 +189,49 @@ def plot_site_detail(site_index, fit, output_path):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Visualize baselines.fit_sigmas_from_average_image."
-    )
-    parser.add_argument("h5_path", nargs="?", default=str(DEFAULT_H5_PATH))
-    parser.add_argument("--site-index", type=int, default=0)
-    parser.add_argument("--fit-size", type=int, default=6)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--batch-size", type=int, default=500)
-    parser.add_argument("--num-workers", type=int, default=2)
-    parser.add_argument("--output-dir", type=Path, default=Path("output_3x3"))
-    args = parser.parse_args()
-
-    h5_path = Path(args.h5_path)
-    args.output_dir.mkdir(exist_ok=True)
+    h5_path = Path(default_h5_path)
+    output_dir.mkdir(exist_ok=True)
 
     with h5py.File(h5_path, "r") as f:
         n = f["images"].shape[0]
 
-    train_idx, _, _ = split_indices(n, seed=args.seed)
+    train_idx, _, _ = split_indices(n, seed=seed)
 
     avg_image, sites = compute_average_image(
         h5_path=h5_path,
         indices=train_idx,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
+        batch_size=batch_size,
+        num_workers=num_workers,
     )
 
-    if not 0 <= args.site_index < sites.shape[0]:
+    if not 0 <= site_index < sites.shape[0]:
         raise IndexError(f"--site-index must be in [0, {sites.shape[0] - 1}]")
 
     sigmas = fit_sigmas_from_average_image(
         avg_image=avg_image,
         sites=sites,
-        fit_size=args.fit_size,
+        fit_size=fit_size,
     )
 
     selected_fit = fit_gaussian_for_site(
         avg_image=avg_image,
-        site=sites[args.site_index],
-        fit_size=args.fit_size,
+        site=sites[site_index],
+        fit_size=fit_size,
     )
 
     stem = h5_path.stem
-    overview_path = args.output_dir / f"{stem}_fit_sigmas_overview.png"
-    detail_path = args.output_dir / f"{stem}_fit_sigma_site_{args.site_index}.png"
+    overview_path = output_dir / f"{stem}_fit_sigmas_overview.png"
+    detail_path = output_dir / f"{stem}_fit_sigma_site_{site_index}.png"
 
     plot_overview(
         avg_image=avg_image,
         sites=sites,
         sigmas=sigmas,
-        fit_size=args.fit_size,
-        site_index=args.site_index,
+        fit_size=fit_size,
+        site_index=site_index,
         output_path=overview_path,
     )
-    plot_site_detail(args.site_index, selected_fit, detail_path)
+    plot_site_detail(site_index, selected_fit, detail_path)
 
     print("Fitted sigmas:")
     print(sigmas)

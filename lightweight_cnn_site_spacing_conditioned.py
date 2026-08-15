@@ -9,53 +9,62 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
 
 from cnn_site import (
-    CNN_SITE_DECISION_THRESHOLD,
+    cnn_site_decision_threshold,
     compute_cnn_preprocessing,
-    extract_site_crop,
+    extract_site_crops,
     set_random_seed,
 )
 from mf_site import classification_fidelity
 from utils import get_device
 
 
-DEFAULT_DATA_DIR = Path("spacing_datasets_3x3")
-DEFAULT_MODEL_DIR = Path("models_3x3")
-DEFAULT_OUTPUT_DIR = Path("output_3x3")
+default_data_dir = Path("spacing_datasets_3x3")
+default_model_dir = Path("models_3x3")
+default_output_dir = Path("output_3x3")
 
-SPACING_CONDITIONED_METHOD = "lightweight_cnn_site_spacing_conditioned"
-POOLED_METHOD = "lightweight_cnn_site_pooled"
-SPACING_CONDITIONED_ARCHITECTURE = "tiny_cnn_site_fc8_spacing_fc8_fc2"
-POOLED_ARCHITECTURE = "tiny_cnn_site_fc8_fc8_fc2"
+spacing_conditioned_method = "lightweight_cnn_site_spacing_conditioned"
+pooled_method = "lightweight_cnn_site_pooled"
+specialist_method_prefix = "lightweight_cnn_site_specialist"
+spacing_conditioned_architecture = "tiny_cnn_site_fc8_spacing_fc8_fc2"
+pooled_architecture = "tiny_cnn_site_fc8_fc8_fc2"
+specialist_architecture = "tiny_cnn_site_fc8_fc8_fc2_single_spacing"
 
-CROP_SIZE = 20
-LEARNING_RATE = 1e-4
-EPOCHS = 300
-EARLY_STOPPING_PATIENCE = 20
-EARLY_STOPPING_MIN_DELTA = 1e-5
-BATCH_SIZE = 4096
-EVAL_BATCH_SIZE = 16384
-NUM_WORKERS = 20
-BASE_SEED = 42
-DEVICE = "cuda:1"
+crop_size = 20
+learning_rate = 1e-4
+epochs = 300
+early_stopping_patience = 20
+early_stopping_min_delta = 1e-5
+batch_size = 4096
+eval_batch_size = 16384
+num_workers = 20
+base_seed = 42
+device = "cuda:1"
+spacing_site_crop_cache_version = 1
 
-SPACING_CENTER_PX = 16.0
-SPACING_SCALE_PX = 12.0
-SELECTED_SPACINGS_PX = None
-CONDITION_ON_SPACING = True
+spacing_center_px = 16.0
+spacing_scale_px = 12.0
+selected_spacings_px = None
+condition_on_spacing = True
+train_pooled_model = True
+train_spacing_conditioned_model = True
+train_specialist_models = True
+specialist_spacings_px = None
+use_site_crop_cache = True
+site_crop_cache_batch_size = 256
 
 
 def normalize_spacing_px(
     spacing_px,
-    center_px=SPACING_CENTER_PX,
-    scale_px=SPACING_SCALE_PX,
+    center_px=spacing_center_px,
+    scale_px=spacing_scale_px,
 ):
     return (np.asarray(spacing_px, dtype=np.float32) - center_px) / scale_px
 
 
 def spacing_normalization_metadata(
     spacing_values_px=None,
-    center_px=SPACING_CENTER_PX,
-    scale_px=SPACING_SCALE_PX,
+    center_px=spacing_center_px,
+    scale_px=spacing_scale_px,
 ):
     metadata = {
         "formula": "(spacing_px - center_px) / scale_px",
@@ -114,6 +123,199 @@ def make_spacing_balanced_split(
     return train_idx, val_idx, test_idx
 
 
+def _source_file_signature(h5_path):
+    h5_path = Path(h5_path)
+    stat = h5_path.stat()
+    return {
+        "source_h5_path": str(h5_path.resolve()),
+        "source_h5_size": int(stat.st_size),
+        "source_h5_mtime_ns": int(stat.st_mtime_ns),
+    }
+
+
+def _spacing_site_crop_cache_matches(
+    cache_path,
+    h5_path,
+    crop_size,
+    image_key="images",
+    label_key="labels",
+    site_key="sites",
+    spacing_key="spacing_px",
+):
+    cache_path = Path(cache_path)
+    if not cache_path.exists():
+        return False
+
+    signature = _source_file_signature(h5_path)
+    try:
+        with h5py.File(h5_path, "r") as source, h5py.File(cache_path, "r") as cache:
+            required_keys = ("crops", "labels", "sites", "spacing_px")
+            if any(key not in cache for key in required_keys):
+                return False
+
+            n_images = source[image_key].shape[0]
+            n_sites = source[label_key].shape[1]
+            expected_crop_shape = (n_images, n_sites, int(crop_size), int(crop_size))
+            if tuple(cache["crops"].shape) != expected_crop_shape:
+                return False
+            if tuple(cache["labels"].shape) != tuple(source[label_key].shape):
+                return False
+            if tuple(cache["sites"].shape) != tuple(source[site_key].shape):
+                return False
+            if tuple(cache["spacing_px"].shape) != tuple(source[spacing_key].shape):
+                return False
+
+            attrs = cache.attrs
+            if int(attrs.get("cache_version", -1)) != spacing_site_crop_cache_version:
+                return False
+            if int(attrs.get("crop_size", -1)) != int(crop_size):
+                return False
+            for key, value in signature.items():
+                if attrs.get(key) != value:
+                    return False
+    except OSError:
+        return False
+
+    return True
+
+
+def build_spacing_site_crop_cache(
+    h5_path,
+    cache_path,
+    crop_size=crop_size,
+    image_key="images",
+    label_key="labels",
+    site_key="sites",
+    spacing_key="spacing_px",
+    batch_size=site_crop_cache_batch_size,
+    overwrite=False,
+):
+    cache_path = Path(cache_path)
+    crop_size = int(crop_size)
+    if crop_size != 20:
+        raise ValueError("spacing-conditioned lightweight CNN-site uses fixed 20x20 crops")
+
+    if (
+        not overwrite
+        and _spacing_site_crop_cache_matches(
+            cache_path=cache_path,
+            h5_path=h5_path,
+            crop_size=crop_size,
+            image_key=image_key,
+            label_key=label_key,
+            site_key=site_key,
+            spacing_key=spacing_key,
+        )
+    ):
+        print(f"Using spacing site crop cache: {cache_path}")
+        return cache_path
+
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
+    tmp_path.unlink(missing_ok=True)
+
+    with h5py.File(h5_path, "r") as source:
+        images = source[image_key]
+        labels = source[label_key]
+        sites = source[site_key]
+        spacing_px = source[spacing_key]
+
+        image_shape = images.shape
+        label_shape = labels.shape
+        site_shape = sites.shape
+        spacing_shape = spacing_px.shape
+        if len(image_shape) != 3:
+            raise ValueError(f"expected images shape (N,H,W), got {image_shape}")
+        if len(label_shape) != 2:
+            raise ValueError(f"expected labels shape (N,Q), got {label_shape}")
+        if len(site_shape) != 3 or site_shape[2] != 2:
+            raise ValueError(f"expected sites shape (N,Q,2), got {site_shape}")
+        if len(spacing_shape) != 1:
+            raise ValueError(f"expected spacing_px shape (N,), got {spacing_shape}")
+        if image_shape[0] != label_shape[0] or image_shape[0] != site_shape[0]:
+            raise ValueError("images, labels, and sites must have the same first dimension")
+        if image_shape[0] != spacing_shape[0]:
+            raise ValueError("images and spacing_px must have the same first dimension")
+        if label_shape[1] != site_shape[1]:
+            raise ValueError("labels and sites must have the same site count")
+
+        n_images = int(image_shape[0])
+        n_sites = int(label_shape[1])
+        crop_dtype = images.dtype if np.issubdtype(images.dtype, np.integer) else np.float32
+
+        with h5py.File(tmp_path, "w") as cache:
+            crop_dataset = cache.create_dataset(
+                "crops",
+                shape=(n_images, n_sites, crop_size, crop_size),
+                dtype=crop_dtype,
+                chunks=(min(int(batch_size), n_images), n_sites, crop_size, crop_size),
+            )
+            label_dataset = cache.create_dataset(
+                "labels",
+                shape=label_shape,
+                dtype=labels.dtype,
+                chunks=(min(int(batch_size), n_images), n_sites),
+            )
+            site_dataset = cache.create_dataset(
+                "sites",
+                shape=site_shape,
+                dtype=np.float32,
+                chunks=(min(int(batch_size), n_images), n_sites, 2),
+            )
+            spacing_dataset = cache.create_dataset(
+                "spacing_px",
+                shape=spacing_shape,
+                dtype=np.float32,
+                chunks=(min(int(batch_size), n_images),),
+            )
+            if "spacing_values_px" in source:
+                cache.create_dataset(
+                    "spacing_values_px",
+                    data=source["spacing_values_px"][:].astype(np.float32),
+                    dtype=np.float32,
+                )
+
+            cache.attrs["cache_version"] = spacing_site_crop_cache_version
+            cache.attrs["crop_size"] = crop_size
+            cache.attrs["image_key"] = image_key
+            cache.attrs["label_key"] = label_key
+            cache.attrs["site_key"] = site_key
+            cache.attrs["spacing_key"] = spacing_key
+            cache.attrs["preprocessing"] = "raw_site_crops_before_global_mean_range_normalization"
+            for key, value in _source_file_signature(h5_path).items():
+                cache.attrs[key] = value
+
+            progress = tqdm(
+                range(0, n_images, int(batch_size)),
+                desc=f"Building {h5_path.stem} spacing crop cache",
+                unit="batch",
+                leave=False,
+            )
+            for start in progress:
+                stop = min(start + int(batch_size), n_images)
+                image_batch = images[start:stop]
+                site_batch = sites[start:stop].astype(np.float32)
+                crop_batch = np.empty(
+                    (stop - start, n_sites, crop_size, crop_size),
+                    dtype=crop_dtype,
+                )
+                for local_index, image in enumerate(image_batch):
+                    crop_batch[local_index] = extract_site_crops(
+                        image=image.astype(np.float32, copy=False),
+                        sites=site_batch[local_index],
+                        crop_size=crop_size,
+                    ).astype(crop_dtype, copy=False)
+
+                crop_dataset[start:stop] = crop_batch
+                label_dataset[start:stop] = labels[start:stop]
+                site_dataset[start:stop] = site_batch
+                spacing_dataset[start:stop] = spacing_px[start:stop].astype(np.float32)
+
+    tmp_path.replace(cache_path)
+    print(f"Saved spacing site crop cache: {cache_path}")
+    return cache_path
+
+
 class SpacingCnnSiteDataset(Dataset):
     """
     Reads one full image and returns all per-site 20x20 crops.
@@ -128,15 +330,15 @@ class SpacingCnnSiteDataset(Dataset):
         self,
         h5_path,
         indices,
-        crop_size=CROP_SIZE,
+        crop_size=crop_size,
         image_key="images",
         label_key="labels",
         site_key="sites",
         spacing_key="spacing_px",
         mean_image=None,
         scale=None,
-        spacing_center_px=SPACING_CENTER_PX,
-        spacing_scale_px=SPACING_SCALE_PX,
+        spacing_center_px=spacing_center_px,
+        spacing_scale_px=spacing_scale_px,
     ):
         self.h5_path = h5_path
         self.indices = list(indices)
@@ -203,16 +405,10 @@ class SpacingCnnSiteDataset(Dataset):
             image = image / self.scale
 
         sites = f[self.site_key][file_index].astype(np.float32)
-        crops = np.stack(
-            [
-                extract_site_crop(
-                    image=image,
-                    site=site,
-                    crop_size=self.crop_size,
-                )
-                for site in sites
-            ],
-            axis=0,
+        crops = extract_site_crops(
+            image=image,
+            sites=sites,
+            crop_size=self.crop_size,
         )
 
         labels = (f[self.label_key][file_index] > 0.5).astype(np.int64)
@@ -231,8 +427,111 @@ class SpacingCnnSiteDataset(Dataset):
         )
 
 
+class CachedSpacingCnnSiteDataset(Dataset):
+    def __init__(
+        self,
+        cache_path,
+        indices,
+        crop_size=crop_size,
+        mean_image=None,
+        scale=None,
+        spacing_center_px=spacing_center_px,
+        spacing_scale_px=spacing_scale_px,
+    ):
+        self.cache_path = cache_path
+        self.indices = list(indices)
+        self.crop_size = int(crop_size)
+        self.mean_image = None if mean_image is None else np.asarray(mean_image, dtype=np.float32)
+        self.scale = None if scale is None else float(scale)
+        self.spacing_center_px = float(spacing_center_px)
+        self.spacing_scale_px = float(spacing_scale_px)
+        self._h5 = None
+
+        if self.crop_size != 20:
+            raise ValueError("spacing-conditioned lightweight CNN-site uses fixed 20x20 crops")
+        if self.mean_image is not None and self.mean_image.ndim != 0:
+            raise ValueError("cached spacing site crops only support scalar mean preprocessing")
+
+        with h5py.File(cache_path, "r") as f:
+            if int(f.attrs.get("crop_size", -1)) != self.crop_size:
+                raise ValueError(
+                    f"cache crop_size={f.attrs.get('crop_size')} does not match "
+                    f"requested crop_size={self.crop_size}"
+                )
+            self.n_images = int(f["crops"].shape[0])
+            self.n_sites = int(f["crops"].shape[1])
+            self.image_shape = tuple(f["crops"].shape[2:])
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_h5"] = None
+        return state
+
+    def _file(self):
+        if self._h5 is None:
+            self._h5 = h5py.File(self.cache_path, "r")
+        return self._h5
+
+    def _preprocess_crops(self, crops):
+        crops = crops.astype(np.float32, copy=False)
+        if self.mean_image is not None:
+            crops = crops - self.mean_image
+        if self.scale is not None:
+            crops = crops / self.scale
+        return crops
+
+    def _make_spacing_outputs(self, spacing_px):
+        spacing_norm = np.float32(
+            (spacing_px - self.spacing_center_px) / self.spacing_scale_px
+        )
+        spacing_norm_sites = np.full(self.n_sites, spacing_norm, dtype=np.float32)
+        spacing_px_sites = np.full(self.n_sites, spacing_px, dtype=np.float32)
+        return spacing_norm_sites, spacing_px_sites
+
+    def __getitem__(self, idx):
+        file_index = int(self.indices[idx])
+
+        f = self._file()
+        crops = self._preprocess_crops(f["crops"][file_index])
+        labels = (f["labels"][file_index] > 0.5).astype(np.int64)
+        spacing_px = np.float32(f["spacing_px"][file_index])
+        spacing_norm_sites, spacing_px_sites = self._make_spacing_outputs(spacing_px)
+
+        return (
+            torch.from_numpy(crops[:, None, :, :]).float(),
+            torch.from_numpy(labels).long(),
+            torch.from_numpy(spacing_norm_sites).float(),
+            torch.from_numpy(spacing_px_sites).float(),
+        )
+
+    def __getitems__(self, indices):
+        file_indices = np.asarray([self.indices[int(idx)] for idx in indices], dtype=np.int64)
+        unique_file_indices, inverse = np.unique(file_indices, return_inverse=True)
+
+        f = self._file()
+        crops = self._preprocess_crops(f["crops"][unique_file_indices])[inverse]
+        labels = (f["labels"][unique_file_indices] > 0.5).astype(np.int64)[inverse]
+        spacing_px_values = f["spacing_px"][unique_file_indices].astype(np.float32)[inverse]
+
+        items = []
+        for crop, label, spacing_px in zip(crops, labels, spacing_px_values):
+            spacing_norm_sites, spacing_px_sites = self._make_spacing_outputs(spacing_px)
+            items.append(
+                (
+                    torch.from_numpy(crop[:, None, :, :]).float(),
+                    torch.from_numpy(label).long(),
+                    torch.from_numpy(spacing_norm_sites).float(),
+                    torch.from_numpy(spacing_px_sites).float(),
+                )
+            )
+        return items
+
+
 class LightweightCnnSiteEncoder(nn.Module):
-    def __init__(self, crop_size=CROP_SIZE, embedding_dim=8):
+    def __init__(self, crop_size=crop_size, embedding_dim=8):
         super().__init__()
         crop_size = int(crop_size)
         pooled_side = crop_size // 4
@@ -260,7 +559,7 @@ class LightweightCnnSiteEncoder(nn.Module):
 
 
 class PooledLightweightCnnSiteNet(nn.Module):
-    def __init__(self, crop_size=CROP_SIZE):
+    def __init__(self, crop_size=crop_size):
         super().__init__()
         self.encoder = LightweightCnnSiteEncoder(crop_size=crop_size, embedding_dim=8)
         self.classifier = nn.Sequential(
@@ -275,7 +574,7 @@ class PooledLightweightCnnSiteNet(nn.Module):
 
 
 class SpacingConditionedLightweightCnnSiteNet(nn.Module):
-    def __init__(self, crop_size=CROP_SIZE):
+    def __init__(self, crop_size=crop_size):
         super().__init__()
         self.encoder = LightweightCnnSiteEncoder(crop_size=crop_size, embedding_dim=8)
         self.classifier = nn.Sequential(
@@ -294,14 +593,22 @@ class SpacingConditionedLightweightCnnSiteNet(nn.Module):
 
 
 def model_method(condition_on_spacing):
-    return SPACING_CONDITIONED_METHOD if condition_on_spacing else POOLED_METHOD
+    return spacing_conditioned_method if condition_on_spacing else pooled_method
 
 
 def model_architecture(condition_on_spacing):
-    return SPACING_CONDITIONED_ARCHITECTURE if condition_on_spacing else POOLED_ARCHITECTURE
+    return spacing_conditioned_architecture if condition_on_spacing else pooled_architecture
 
 
-def build_model(condition_on_spacing, crop_size=CROP_SIZE, device="cpu"):
+def spacing_name(spacing_px):
+    return f"{float(spacing_px):g}".replace(".", "p")
+
+
+def specialist_model_method(spacing_px):
+    return f"{specialist_method_prefix}_{spacing_name(spacing_px)}px"
+
+
+def build_model(condition_on_spacing, crop_size=crop_size, device="cpu"):
     if condition_on_spacing:
         model = SpacingConditionedLightweightCnnSiteNet(crop_size=crop_size)
     else:
@@ -313,7 +620,7 @@ def load_lightweight_spacing_cnn_site_model(best, device="cpu"):
     condition_on_spacing = bool(best.get("condition_on_spacing", True))
     model = build_model(
         condition_on_spacing=condition_on_spacing,
-        crop_size=int(best.get("crop_size", CROP_SIZE)),
+        crop_size=int(best.get("crop_size", crop_size)),
         device=device,
     )
     model.load_state_dict(best["state_dict"])
@@ -331,18 +638,30 @@ def make_spacing_site_loader(
     num_workers,
     shuffle,
     pin_memory=False,
-    spacing_center_px=SPACING_CENTER_PX,
-    spacing_scale_px=SPACING_SCALE_PX,
+    spacing_center_px=spacing_center_px,
+    spacing_scale_px=spacing_scale_px,
+    crop_cache_path=None,
 ):
-    dataset = SpacingCnnSiteDataset(
-        h5_path=h5_path,
-        indices=indices,
-        crop_size=crop_size,
-        mean_image=mean_image,
-        scale=scale,
-        spacing_center_px=spacing_center_px,
-        spacing_scale_px=spacing_scale_px,
-    )
+    if crop_cache_path is None:
+        dataset = SpacingCnnSiteDataset(
+            h5_path=h5_path,
+            indices=indices,
+            crop_size=crop_size,
+            mean_image=mean_image,
+            scale=scale,
+            spacing_center_px=spacing_center_px,
+            spacing_scale_px=spacing_scale_px,
+        )
+    else:
+        dataset = CachedSpacingCnnSiteDataset(
+            cache_path=crop_cache_path,
+            indices=indices,
+            crop_size=crop_size,
+            mean_image=mean_image,
+            scale=scale,
+            spacing_center_px=spacing_center_px,
+            spacing_scale_px=spacing_scale_px,
+        )
     image_batch_size = max(1, batch_size // dataset.n_sites)
 
     return DataLoader(
@@ -433,17 +752,18 @@ def train_lightweight_spacing_cnn_site(
     h5_path,
     train_idx,
     val_idx,
-    crop_size=CROP_SIZE,
-    learning_rate=LEARNING_RATE,
-    epochs=EPOCHS,
-    batch_size=BATCH_SIZE,
-    num_workers=NUM_WORKERS,
+    crop_size=crop_size,
+    learning_rate=learning_rate,
+    epochs=epochs,
+    batch_size=batch_size,
+    num_workers=num_workers,
     device="cpu",
     mean_image=None,
     scale=None,
-    condition_on_spacing=CONDITION_ON_SPACING,
-    early_stopping_patience=EARLY_STOPPING_PATIENCE,
-    early_stopping_min_delta=EARLY_STOPPING_MIN_DELTA,
+    condition_on_spacing=condition_on_spacing,
+    early_stopping_patience=early_stopping_patience,
+    early_stopping_min_delta=early_stopping_min_delta,
+    crop_cache_path=None,
 ):
     train_loader = make_spacing_site_loader(
         h5_path=h5_path,
@@ -455,6 +775,7 @@ def train_lightweight_spacing_cnn_site(
         num_workers=num_workers,
         shuffle=True,
         pin_memory=str(device).startswith("cuda"),
+        crop_cache_path=crop_cache_path,
     )
     val_loader = make_spacing_site_loader(
         h5_path=h5_path,
@@ -466,6 +787,7 @@ def train_lightweight_spacing_cnn_site(
         num_workers=num_workers,
         shuffle=False,
         pin_memory=str(device).startswith("cuda"),
+        crop_cache_path=crop_cache_path,
     )
 
     n_sites = train_loader.dataset.n_sites
@@ -576,13 +898,13 @@ def train_lightweight_spacing_cnn_site(
         device=device,
     )
 
-    thresholds = np.full(n_sites, CNN_SITE_DECISION_THRESHOLD, dtype=np.float32)
+    thresholds = np.full(n_sites, cnn_site_decision_threshold, dtype=np.float32)
     fidelities = np.zeros(n_sites, dtype=np.float32)
     for q in range(n_sites):
         fidelities[q] = classification_fidelity(
             val_scores[:, q],
             val_labels[:, q],
-            CNN_SITE_DECISION_THRESHOLD,
+            cnn_site_decision_threshold,
         )
 
     condition_on_spacing = bool(condition_on_spacing)
@@ -610,6 +932,7 @@ def train_lightweight_spacing_cnn_site(
         "epochs": int(epochs),
         "batch_size": int(batch_size),
         "spacing_normalization": spacing_normalization_metadata(),
+        "crop_cache_path": None if crop_cache_path is None else str(crop_cache_path),
     }
 
 
@@ -762,6 +1085,7 @@ def run_one_split(
     selected_spacings_px,
     early_stopping_patience,
     early_stopping_min_delta,
+    crop_cache_path=None,
 ):
     with h5py.File(h5_path, "r") as f:
         spacing_px = f["spacing_px"][:].astype(np.float32)
@@ -795,6 +1119,7 @@ def run_one_split(
         condition_on_spacing=condition_on_spacing,
         early_stopping_patience=early_stopping_patience,
         early_stopping_min_delta=early_stopping_min_delta,
+        crop_cache_path=crop_cache_path,
     )
 
     trained["spacing_normalization"] = spacing_normalization_metadata(
@@ -811,6 +1136,7 @@ def run_one_split(
         num_workers=num_workers,
         shuffle=False,
         pin_memory=str(device).startswith("cuda"),
+        crop_cache_path=crop_cache_path,
     )
 
     test_metrics = evaluate_lightweight_spacing_cnn_site_model(
@@ -848,26 +1174,94 @@ def run_one_split(
         ).copy(),
         "test_total_errors": int(test_metrics["total_errors"]),
         "trained_model": trained,
+        "crop_cache_path": None if crop_cache_path is None else str(crop_cache_path),
     }
 
 
+def training_conditions(
+    condition_on_spacing=condition_on_spacing,
+    train_pooled_model=train_pooled_model,
+    train_spacing_conditioned_model=train_spacing_conditioned_model,
+):
+    conditions = []
+    if train_pooled_model:
+        conditions.append(False)
+    if train_spacing_conditioned_model:
+        conditions.append(True)
+    if not conditions:
+        conditions.append(bool(condition_on_spacing))
+    return conditions
+
+
+def training_jobs_for_file(
+    h5_path,
+    selected_spacings_px=selected_spacings_px,
+    condition_on_spacing=condition_on_spacing,
+    train_pooled_model=train_pooled_model,
+    train_spacing_conditioned_model=train_spacing_conditioned_model,
+    train_specialist_models=train_specialist_models,
+    specialist_spacings_px=specialist_spacings_px,
+):
+    jobs = []
+
+    for condition_value in training_conditions(
+        condition_on_spacing=condition_on_spacing,
+        train_pooled_model=train_pooled_model,
+        train_spacing_conditioned_model=train_spacing_conditioned_model,
+    ):
+        jobs.append(
+            {
+                "method": model_method(condition_value),
+                "architecture": model_architecture(condition_value),
+                "condition_on_spacing": condition_value,
+                "selected_spacings_px": selected_spacings_px,
+                "specialist_spacing_px": None,
+            }
+        )
+
+    if train_specialist_models:
+        if specialist_spacings_px is None:
+            specialist_values = read_spacing_values(h5_path)
+        else:
+            specialist_values = np.asarray(specialist_spacings_px, dtype=np.float32)
+
+        for spacing_value in np.sort(specialist_values):
+            jobs.append(
+                {
+                    "method": specialist_model_method(spacing_value),
+                    "architecture": specialist_architecture,
+                    "condition_on_spacing": False,
+                    "selected_spacings_px": np.asarray([spacing_value], dtype=np.float32),
+                    "specialist_spacing_px": float(spacing_value),
+                }
+            )
+
+    return jobs
+
+
 def main(
-    data_dir=DEFAULT_DATA_DIR,
-    model_dir=DEFAULT_MODEL_DIR,
-    output_dir=DEFAULT_OUTPUT_DIR,
-    crop_size=CROP_SIZE,
-    learning_rate=LEARNING_RATE,
-    epochs=EPOCHS,
-    batch_size=BATCH_SIZE,
-    eval_batch_size=EVAL_BATCH_SIZE,
-    num_workers=NUM_WORKERS,
-    base_seed=BASE_SEED,
-    device=DEVICE,
-    condition_on_spacing=CONDITION_ON_SPACING,
-    selected_spacings_px=SELECTED_SPACINGS_PX,
-    early_stopping_patience=EARLY_STOPPING_PATIENCE,
-    early_stopping_min_delta=EARLY_STOPPING_MIN_DELTA,
+    data_dir=default_data_dir,
+    model_dir=default_model_dir,
+    output_dir=default_output_dir,
+    crop_size=crop_size,
+    learning_rate=learning_rate,
+    epochs=epochs,
+    batch_size=batch_size,
+    eval_batch_size=eval_batch_size,
+    num_workers=num_workers,
+    base_seed=base_seed,
+    device=device,
+    condition_on_spacing=condition_on_spacing,
+    selected_spacings_px=selected_spacings_px,
+    early_stopping_patience=early_stopping_patience,
+    early_stopping_min_delta=early_stopping_min_delta,
     save_learning_curves=True,
+    use_site_crop_cache=use_site_crop_cache,
+    site_crop_cache_batch_size=site_crop_cache_batch_size,
+    train_pooled_model=train_pooled_model,
+    train_spacing_conditioned_model=train_spacing_conditioned_model,
+    train_specialist_models=train_specialist_models,
+    specialist_spacings_px=specialist_spacings_px,
 ):
     model_dir.mkdir(parents=True, exist_ok=True)
     if save_learning_curves:
@@ -879,13 +1273,8 @@ def main(
         raise FileNotFoundError(f"no .h5 datasets found in {data_dir}")
 
     device = device or get_device()
-    condition_on_spacing = bool(condition_on_spacing)
-    method = model_method(condition_on_spacing)
-    architecture = model_architecture(condition_on_spacing)
 
     for h5_path in h5_paths:
-        output_path = model_dir / f"{h5_path.stem}_{method}.joblib"
-
         with h5py.File(h5_path, "r") as f:
             n_samples = f["images"].shape[0]
 
@@ -893,95 +1282,120 @@ def main(
             print(f"Skipping {h5_path}: dataset has only {n_samples} images")
             continue
 
-        result = run_one_split(
-            h5_path=h5_path,
-            split_seed=base_seed,
-            crop_size=crop_size,
-            learning_rate=learning_rate,
-            epochs=epochs,
-            batch_size=batch_size,
-            eval_batch_size=eval_batch_size,
-            num_workers=num_workers,
-            device=device,
-            condition_on_spacing=condition_on_spacing,
-            selected_spacings_px=selected_spacings_px,
-            early_stopping_patience=early_stopping_patience,
-            early_stopping_min_delta=early_stopping_min_delta,
-        )
-        trained = result["trained_model"]
-
-        save_obj = {
-            **trained,
-            "method": method,
-            "architecture": architecture,
-            "condition_on_spacing": condition_on_spacing,
-            "h5_path": str(h5_path),
-            "seed": base_seed,
-            "train_idx": result["train_idx"],
-            "val_idx": result["val_idx"],
-            "test_idx": result["test_idx"],
-            "mean_image": result["mean_image"],
-            "scale": result["scale"],
-            "crop_size": int(crop_size),
-            "learning_rate": float(learning_rate),
-            "epochs": int(epochs),
-            "epochs_trained": result["epochs_trained"],
-            "batch_size": int(batch_size),
-            "eval_batch_size": int(eval_batch_size),
-            "early_stopping_patience": (
-                None
-                if early_stopping_patience is None
-                else int(early_stopping_patience)
-            ),
-            "early_stopping_min_delta": float(early_stopping_min_delta),
-            "stopped_epoch": result["stopped_epoch"],
-            "stopped_early": result["stopped_early"],
-            "thresholds": result["thresholds"],
-            "test_fidelity": result["test_fidelity"],
-            "test_mean_fidelity": result["test_mean_fidelity"],
-            "test_fidelity_by_spacing": result["test_fidelity_by_spacing"],
-            "test_raw_accuracy": result["test_raw_accuracy"],
-            "test_errors_per_site": result["test_errors_per_site"],
-            "test_total_errors": result["test_total_errors"],
-            "spacing_values_px": result["spacing_values_px"],
-            "selected_spacings_px": result["selected_spacings_px"],
-            "spacing_normalization": spacing_normalization_metadata(
-                spacing_values_px=result["spacing_values_px"],
-            ),
-            "preprocessing": "subtract_train_global_mean_divide_train_pixel_range",
-        }
-
-        joblib.dump(save_obj, output_path)
-
-        learning_curve_path = None
-        if save_learning_curves:
-            learning_curve_path = learning_curve_dir / (
-                f"{h5_path.stem}_{method}_learning_curve.png"
+        crop_cache_path = None
+        if use_site_crop_cache:
+            crop_cache_path = build_spacing_site_crop_cache(
+                h5_path=h5_path,
+                cache_path=output_dir / "site_crop_cache" / f"{h5_path.stem}_spacing_crop{crop_size}.h5",
+                crop_size=crop_size,
+                batch_size=site_crop_cache_batch_size,
             )
-            try:
-                plot_learning_curves(
-                    history=trained["history"],
-                    output_path=learning_curve_path,
-                    title=f"{method} learning curve: {h5_path.stem}",
-                    best_epoch=result["best_epoch"],
-                )
-            except (ImportError, OSError, RuntimeError, ValueError) as exc:
-                print(f"Skipping learning curve for {h5_path.name}: {exc}")
-                learning_curve_path = None
 
-        print(
-            f"Saved {output_path} | "
-            f"mean F={result['test_mean_fidelity']:.8f} | "
-            f"best epoch={result['best_epoch']} | "
-            f"trained epochs={result['epochs_trained']}"
-        )
-        if learning_curve_path is not None:
-            print(f"Saved learning curve: {learning_curve_path}")
+        for job in training_jobs_for_file(
+            h5_path=h5_path,
+            selected_spacings_px=selected_spacings_px,
+            condition_on_spacing=condition_on_spacing,
+            train_pooled_model=train_pooled_model,
+            train_spacing_conditioned_model=train_spacing_conditioned_model,
+            train_specialist_models=train_specialist_models,
+            specialist_spacings_px=specialist_spacings_px,
+        ):
+            method = job["method"]
+            architecture = job["architecture"]
+            output_path = model_dir / f"{h5_path.stem}_{method}.joblib"
+
+            result = run_one_split(
+                h5_path=h5_path,
+                split_seed=base_seed,
+                crop_size=crop_size,
+                learning_rate=learning_rate,
+                epochs=epochs,
+                batch_size=batch_size,
+                eval_batch_size=eval_batch_size,
+                num_workers=num_workers,
+                device=device,
+                condition_on_spacing=job["condition_on_spacing"],
+                selected_spacings_px=job["selected_spacings_px"],
+                early_stopping_patience=early_stopping_patience,
+                early_stopping_min_delta=early_stopping_min_delta,
+                crop_cache_path=crop_cache_path,
+            )
+            trained = result["trained_model"]
+
+            save_obj = {
+                **trained,
+                "method": method,
+                "architecture": architecture,
+                "condition_on_spacing": job["condition_on_spacing"],
+                "specialist_spacing_px": job["specialist_spacing_px"],
+                "h5_path": str(h5_path),
+                "seed": base_seed,
+                "train_idx": result["train_idx"],
+                "val_idx": result["val_idx"],
+                "test_idx": result["test_idx"],
+                "mean_image": result["mean_image"],
+                "scale": result["scale"],
+                "crop_size": int(crop_size),
+                "learning_rate": float(learning_rate),
+                "epochs": int(epochs),
+                "epochs_trained": result["epochs_trained"],
+                "batch_size": int(batch_size),
+                "eval_batch_size": int(eval_batch_size),
+                "crop_cache_path": result["crop_cache_path"],
+                "early_stopping_patience": (
+                    None
+                    if early_stopping_patience is None
+                    else int(early_stopping_patience)
+                ),
+                "early_stopping_min_delta": float(early_stopping_min_delta),
+                "stopped_epoch": result["stopped_epoch"],
+                "stopped_early": result["stopped_early"],
+                "thresholds": result["thresholds"],
+                "test_fidelity": result["test_fidelity"],
+                "test_mean_fidelity": result["test_mean_fidelity"],
+                "test_fidelity_by_spacing": result["test_fidelity_by_spacing"],
+                "test_raw_accuracy": result["test_raw_accuracy"],
+                "test_errors_per_site": result["test_errors_per_site"],
+                "test_total_errors": result["test_total_errors"],
+                "spacing_values_px": result["spacing_values_px"],
+                "selected_spacings_px": result["selected_spacings_px"],
+                "spacing_normalization": spacing_normalization_metadata(
+                    spacing_values_px=result["spacing_values_px"],
+                ),
+                "preprocessing": "subtract_train_global_mean_divide_train_pixel_range",
+            }
+
+            joblib.dump(save_obj, output_path)
+
+            learning_curve_path = None
+            if save_learning_curves:
+                learning_curve_path = learning_curve_dir / (
+                    f"{h5_path.stem}_{method}_learning_curve.png"
+                )
+                try:
+                    plot_learning_curves(
+                        history=trained["history"],
+                        output_path=learning_curve_path,
+                        title=f"{method} learning curve: {h5_path.stem}",
+                        best_epoch=result["best_epoch"],
+                    )
+                except (ImportError, OSError, RuntimeError, ValueError) as exc:
+                    print(f"Skipping learning curve for {h5_path.name}: {exc}")
+                    learning_curve_path = None
+
+            print(
+                f"Saved {output_path} | "
+                f"mean F={result['test_mean_fidelity']:.8f} | "
+                f"best epoch={result['best_epoch']} | "
+                f"trained epochs={result['epochs_trained']}"
+            )
+            if learning_curve_path is not None:
+                print(f"Saved learning curve: {learning_curve_path}")
 
 
 if __name__ == "__main__":
     main(
-        data_dir=DEFAULT_DATA_DIR,
-        model_dir=DEFAULT_MODEL_DIR,
-        output_dir=DEFAULT_OUTPUT_DIR,
+        data_dir=default_data_dir,
+        model_dir=default_model_dir,
+        output_dir=default_output_dir,
     )

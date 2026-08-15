@@ -7,16 +7,16 @@ import numpy as np
 from matplotlib.ticker import ScalarFormatter
 
 
-MODEL_DIR = Path("models_3x3")
-OUTPUT_DIR = Path("output_3x3")
+model_dir = Path("models_3x3")
+output_dir = Path("output_3x3")
 
 # MODEL_DIR = Path("models_20x20")
 # OUTPUT_DIR = Path("output_20x20")
 
-METHODS = ["mf_site", "mf_array", "mf_array_gaussian", "square", "gaussian"]
-THRESHOLD_METHODS = ["mf_site", "mf_array", "mf_array_gaussian"]
+methods = ["mf_site", "mf_array", "mf_array_gaussian", "square", "gaussian"]
+threshold_methods = ["mf_site", "mf_array", "mf_array_gaussian"]
 
-METHOD_LABELS = {
+method_labels = {
     "mf_site": "MF-site",
     "mf_array": "MF-array",
     "mf_array_gaussian": "MF-array Gaussian",
@@ -24,7 +24,7 @@ METHOD_LABELS = {
     "gaussian": "Gaussian",
 }
 
-METHOD_COLORS = {
+method_colors = {
     "mf_site": "tab:blue",
     "mf_array": "tab:red",
     "mf_array_gaussian": "tab:purple",
@@ -32,9 +32,9 @@ METHOD_COLORS = {
     "gaussian": "tab:green",
 }
 
-MODEL_RE = re.compile(r"qubit_dataset_sim_([0-9]+(?:\.[0-9]+)?)_(.+)\.joblib$")
-S_USAGE_VALUES = np.arange(2, 15)
-EXPOSURE_XLIM = (0.010, 0.100)
+model_re = re.compile(r"qubit_dataset_sim_([0-9]+(?:\.[0-9]+)?)_(.+)\.joblib$")
+s_usage_values = np.arange(2, 15)
+exposure_xlim = (0.010, 0.100)
 
 def make_repeated_record(path, exposure, method, model):
     repeats = model["repeat_results"]
@@ -68,7 +68,7 @@ def make_repeated_record(path, exposure, method, model):
     }
 
 def parse_model_name(path):
-    match = MODEL_RE.fullmatch(path.name)
+    match = model_re.fullmatch(path.name)
     if match is None:
         return None
 
@@ -118,13 +118,13 @@ def collect_records(model_dir):
         if "repeat_results" in model:
             method = normalize_method(method)
 
-            if method not in METHODS:
+            if method not in methods:
                 continue
 
             records.append(make_repeated_record(path, exposure, method, model))
             continue
 
-        if method not in METHODS:
+        if method not in methods:
             continue
 
         if "s" not in model:
@@ -182,7 +182,7 @@ def group_by_method(records):
             [r for r in records if r["method"] == method],
             key=lambda r: r["exposure"],
         )
-        for method in METHODS
+        for method in methods
     }
 
 
@@ -209,8 +209,8 @@ def plot_mean_s(records_by_method):
             marker="o",
             capsize=3,
             linewidth=1.8,
-            color=METHOD_COLORS[method],
-            label=METHOD_LABELS[method],
+            color=method_colors[method],
+            label=method_labels[method],
         )
 
         for r in records:
@@ -220,11 +220,11 @@ def plot_mean_s(records_by_method):
                 r["s"],
                 s=15,
                 alpha=0.25,
-                color=METHOD_COLORS[method],
+                color=method_colors[method],
             )
 
     format_log_x_axis(ax)
-    ax.set_xlim(*EXPOSURE_XLIM)
+    ax.set_xlim(*exposure_xlim)
     ax.set_xlabel("Exposure time")
     ax.set_ylabel("Selected window size s")
     ax.set_title("Selected s vs Exposure")
@@ -232,7 +232,7 @@ def plot_mean_s(records_by_method):
     ax.legend()
 
     fig.tight_layout()
-    out = OUTPUT_DIR / "mean_s_vs_exposure_all_methods.png"
+    out = output_dir / "mean_s_vs_exposure_all_methods.png"
     fig.savefig(out, dpi=200)
     print("Saved:", out)
 
@@ -240,7 +240,7 @@ def plot_mean_s(records_by_method):
 def plot_threshold(records_by_method):
     fig, ax = plt.subplots(figsize=(7.5, 4.8))
 
-    for method in THRESHOLD_METHODS:
+    for method in threshold_methods:
         records = records_by_method.get(method, [])
         if not records:
             continue
@@ -256,8 +256,8 @@ def plot_threshold(records_by_method):
             marker="o",
             capsize=3,
             linewidth=1.8,
-            color=METHOD_COLORS[method],
-            label=METHOD_LABELS[method],
+            color=method_colors[method],
+            label=method_labels[method],
         )
 
         for r in records:
@@ -267,11 +267,11 @@ def plot_threshold(records_by_method):
                 r["threshold"],
                 s=15,
                 alpha=0.25,
-                color=METHOD_COLORS[method],
+                color=method_colors[method],
             )
 
     format_log_x_axis(ax)
-    ax.set_xlim(*EXPOSURE_XLIM)
+    ax.set_xlim(*exposure_xlim)
     ax.set_xlabel("Exposure time")
     ax.set_ylabel("Threshold")
     ax.set_title("Threshold vs Exposure")
@@ -279,7 +279,7 @@ def plot_threshold(records_by_method):
     ax.legend()
 
     fig.tight_layout()
-    out = OUTPUT_DIR / "threshold_vs_exposure_all_methods.png"
+    out = output_dir / "threshold_vs_exposure_all_methods.png"
     fig.savefig(out, dpi=200)
     print("Saved:", out)
 
@@ -302,8 +302,8 @@ def plot_infidelity(records_by_method):
             y,
             marker="o",
             linewidth=1.8,
-            color=METHOD_COLORS[method],
-            label=METHOD_LABELS[method],
+            color=method_colors[method],
+            label=method_labels[method],
         )
         plotted = True
 
@@ -311,7 +311,7 @@ def plot_infidelity(records_by_method):
         return
 
     format_log_x_axis(ax)
-    ax.set_xlim(*EXPOSURE_XLIM)
+    ax.set_xlim(*exposure_xlim)
     ax.set_xlabel("Exposure time")
     ax.set_ylabel("1 - validation fidelity")
     ax.set_title("Validation Infidelity vs Exposure")
@@ -328,7 +328,7 @@ def plot_infidelity(records_by_method):
         ax.set_yscale("linear")
 
     fig.tight_layout()
-    out = OUTPUT_DIR / "infidelity_vs_exposure_all_methods.png"
+    out = output_dir / "infidelity_vs_exposure_all_methods.png"
     fig.savefig(out, dpi=200)
     print("Saved:", out)
 
@@ -356,7 +356,7 @@ def plot_s_usage_heatmaps(records_by_method):
         records = records_by_method[method]
 
         exposures = np.array([r["exposure"] for r in records])
-        all_s = S_USAGE_VALUES
+        all_s = s_usage_values
         y_pos = np.arange(len(all_s))
 
         counts = np.zeros((len(all_s), len(exposures)), dtype=int)
@@ -378,10 +378,10 @@ def plot_s_usage_heatmaps(records_by_method):
         )
 
         format_log_x_axis(ax)
-        ax.set_xlim(*EXPOSURE_XLIM)
+        ax.set_xlim(*exposure_xlim)
         ax.set_xlabel("Exposure time")
         ax.set_ylabel("Selected s")
-        ax.set_title(f"{METHOD_LABELS[method]}: s Usage")
+        ax.set_title(f"{method_labels[method]}: s Usage")
         ax.set_yticks(y_pos)
         ax.set_yticklabels(all_s)
 
@@ -401,7 +401,7 @@ def plot_s_usage_heatmaps(records_by_method):
         fig.colorbar(mesh, ax=ax, label="number of sites")
 
     fig.tight_layout()
-    out = OUTPUT_DIR / "s_usage_heatmaps_all_methods.png"
+    out = output_dir / "s_usage_heatmaps_all_methods.png"
     fig.savefig(out, dpi=200)
     print("Saved:", out)
 
@@ -434,12 +434,12 @@ def print_table(records):
 
 
 def main():
-    OUTPUT_DIR.mkdir(exist_ok=True)
+    output_dir.mkdir(exist_ok=True)
 
-    records = collect_records(MODEL_DIR)
+    records = collect_records(model_dir)
 
     if not records:
-        raise RuntimeError(f"No matching joblib models found in {MODEL_DIR}")
+        raise RuntimeError(f"No matching joblib models found in {model_dir}")
 
     print_table(records)
 

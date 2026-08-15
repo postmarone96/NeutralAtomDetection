@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
 
 from cnn_site import (
-    CNN_SITE_DECISION_THRESHOLD,
+    cnn_site_decision_threshold,
     compute_cnn_preprocessing,
     make_random_split,
     set_random_seed,
@@ -18,18 +18,18 @@ from mf_site import classification_fidelity
 from utils import H5Dataset, get_device
 
 
-DEFAULT_DATA_DIR = Path(
+default_data_dir = Path(
     "dataset_3x3"
 )
-DEFAULT_MODEL_DIR = Path("models_3x3")
-ARRAY_CROP_SIZE = 28
-LEARNING_RATE = 1e-4
-EPOCHS = 40
-BATCH_SIZE = 64
-EVAL_BATCH_SIZE = 2048
-NUM_WORKERS = 2
-BASE_SEED = 42
-DEVICE = "cuda"
+default_model_dir = Path("models_3x3")
+array_crop_size = 28
+learning_rate = 1e-4
+epochs = 40
+batch_size = 64
+eval_batch_size = 2048
+num_workers = 2
+base_seed = 42
+device = "cuda"
 
 
 def extract_array_crop(image, sites, crop_size):
@@ -264,7 +264,7 @@ def calc_cnn_array_scores_from_array_loader(dataloader, model, device="cpu"):
 def load_cnn_array_model(best, device="cpu"):
     model = CnnArrayNet(
         n_sites=int(best["n_sites"]),
-        crop_size=int(best.get("crop_size", ARRAY_CROP_SIZE)),
+        crop_size=int(best.get("crop_size", array_crop_size)),
     ).to(device)
     model.load_state_dict(best["state_dict"])
     model.eval()
@@ -274,7 +274,7 @@ def load_cnn_array_model(best, device="cpu"):
 @torch.no_grad()
 def calc_cnn_array_scores(dataloader, best, device="cpu"):
     model = load_cnn_array_model(best, device=device)
-    crop_size = int(best.get("crop_size", ARRAY_CROP_SIZE))
+    crop_size = int(best.get("crop_size", array_crop_size))
 
     all_scores = []
     all_labels = []
@@ -407,13 +407,13 @@ def train_cnn_array(
         device=device,
     )
 
-    thresholds = np.full(n_sites, CNN_SITE_DECISION_THRESHOLD, dtype=np.float32)
+    thresholds = np.full(n_sites, cnn_site_decision_threshold, dtype=np.float32)
     fidelities = np.zeros(n_sites, dtype=np.float32)
     for q in range(n_sites):
         fidelities[q] = classification_fidelity(
             val_scores[:, q],
             val_labels[:, q],
-            CNN_SITE_DECISION_THRESHOLD,
+            cnn_site_decision_threshold,
         )
 
     return {
@@ -540,14 +540,14 @@ def run_one_split(
 def main(
     data_dir,
     model_dir,
-    crop_size=ARRAY_CROP_SIZE,
-    learning_rate=LEARNING_RATE,
-    epochs=EPOCHS,
-    batch_size=BATCH_SIZE,
-    eval_batch_size=EVAL_BATCH_SIZE,
-    num_workers=NUM_WORKERS,
-    base_seed=BASE_SEED,
-    device=DEVICE,
+    crop_size=array_crop_size,
+    learning_rate=learning_rate,
+    epochs=epochs,
+    batch_size=batch_size,
+    eval_batch_size=eval_batch_size,
+    num_workers=num_workers,
+    base_seed=base_seed,
+    device=device,
 ):
     model_dir.mkdir(parents=True, exist_ok=True)
 
@@ -616,6 +616,6 @@ def main(
 
 if __name__ == "__main__":
     main(
-        data_dir=DEFAULT_DATA_DIR,
-        model_dir=DEFAULT_MODEL_DIR,
+        data_dir=default_data_dir,
+        model_dir=default_model_dir,
     )

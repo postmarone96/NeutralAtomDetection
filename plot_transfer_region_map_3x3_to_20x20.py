@@ -1,4 +1,3 @@
-import argparse
 import re
 from pathlib import Path
 import h5py
@@ -8,15 +7,23 @@ from matplotlib.colors import BoundaryNorm, ListedColormap
 from matplotlib.patches import Rectangle
 
 
-H5_RE = re.compile(r"qubit_dataset_sim_([0-9]+(?:\.[0-9]+)?)\.h5$")
-DEFAULT_TARGET_DATA_DIR = Path(
+h5_re = re.compile(r"qubit_dataset_sim_([0-9]+(?:\.[0-9]+)?)\.h5$")
+default_target_data_dir = Path(
     "/Users/marone/PycharmProjects/"
     "neutral-atom-imaging-simulation-main/datasets_20x20"
 )
 
+target_h5 = None
+exposure = None
+output_dir = Path("output_3x3_transfer_to_20x20")
+output_name = "transfer_region_map_3x3_to_20x20.png"
+max_images = 200
+no_image = False
+show = False
+
 
 def parse_h5_exposure(path):
-    match = H5_RE.fullmatch(path.name)
+    match = h5_re.fullmatch(path.name)
     if match is None:
         return None
     return float(match.group(1))
@@ -241,41 +248,12 @@ def plot_transfer_region_map(sites, mean_image, output_path):
     return fig
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Plot the 3x3-to-20x20 region allocation used for transfer validation."
-    )
-    parser.add_argument("--target-h5", type=Path, default=None)
-    parser.add_argument("--target-data-dir", type=Path, default=DEFAULT_TARGET_DATA_DIR)
-    parser.add_argument(
-        "--exposure",
-        type=float,
-        default=None,
-        help="Exposure in seconds, used only when selecting an h5 from --target-data-dir.",
-    )
-    parser.add_argument("--output-dir", type=Path, default=Path("output_3x3_transfer_to_20x20"))
-    parser.add_argument(
-        "--output-name",
-        default="transfer_region_map_3x3_to_20x20.png",
-    )
-    parser.add_argument(
-        "--max-images",
-        type=int,
-        default=200,
-        help="Number of images to average for the optional background image.",
-    )
-    parser.add_argument("--no-image", action="store_true")
-    parser.add_argument("--show", action="store_true")
-    return parser.parse_args()
-
-
 def main():
-    args = parse_args()
-    h5_path = args.target_h5 or find_target_h5(args.target_data_dir, args.exposure)
+    h5_path = target_h5 or find_target_h5(default_target_data_dir, exposure)
 
     if h5_path is not None:
-        sites, mean_image = load_sites_and_mean_image(h5_path, args.max_images)
-        if args.no_image:
+        sites, mean_image = load_sites_and_mean_image(h5_path, max_images)
+        if no_image:
             mean_image = None
         print(f"Using target h5: {h5_path}")
     else:
@@ -283,12 +261,12 @@ def main():
         mean_image = None
         print("No target h5 found; using a synthetic 20x20 grid.")
 
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = args.output_dir / args.output_name
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / output_name
     plot_transfer_region_map(sites, mean_image, output_path)
     print(f"Saved plot: {output_path}")
 
-    if args.show:
+    if show:
         plt.show()
     else:
         plt.close("all")

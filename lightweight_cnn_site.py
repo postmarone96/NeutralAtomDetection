@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 from cnn_site import (
-    CNN_SITE_DECISION_THRESHOLD,
+    cnn_site_decision_threshold,
     compute_cnn_preprocessing,
     evaluate_loss_accuracy,
     make_random_split,
@@ -20,21 +20,21 @@ from mf_site import classification_fidelity
 from utils import H5Dataset, extract_patches, get_device
 
 
-DEFAULT_DATA_DIR = Path("dataset_3x3")
-DEFAULT_MODEL_DIR = Path("models_3x3")
-DEFAULT_OUTPUT_DIR = Path("output_3x3")
-LIGHTWEIGHT_CNN_SITE_METHOD = "lightweight_cnn_site"
-LIGHTWEIGHT_CNN_SITE_ARCHITECTURE = "tiny_cnn_site_3conv_pool_8fc"
-CROP_SIZE = 10
-LEARNING_RATE = 1e-4
-EPOCHS = 300
-EARLY_STOPPING_PATIENCE = 40
-EARLY_STOPPING_MIN_DELTA = 1e-5
-BATCH_SIZE = 64
-EVAL_BATCH_SIZE = 2048
-NUM_WORKERS = 4
-BASE_SEED = 42
-DEVICE = "cuda"
+default_data_dir = Path("dataset_3x3")
+default_model_dir = Path("models_3x3")
+default_output_dir = Path("output_3x3")
+lightweight_cnn_site_method = "lightweight_cnn_site"
+lightweight_cnn_site_architecture = "tiny_cnn_site_3conv_pool_8fc"
+crop_size = 10
+learning_rate = 1e-4
+epochs = 300
+early_stopping_patience = 40
+early_stopping_min_delta = 1e-5
+batch_size = 64
+eval_batch_size = 2048
+num_workers = 4
+base_seed = 42
+device = "cuda"
 
 
 class LightweightCnnSiteNet(nn.Module):
@@ -77,7 +77,7 @@ class LightweightCnnSiteNet(nn.Module):
 
 def load_lightweight_cnn_site_model(best, device="cpu"):
     model = LightweightCnnSiteNet(
-        crop_size=int(best.get("crop_size", CROP_SIZE))
+        crop_size=int(best.get("crop_size", crop_size))
     ).to(device)
     model.load_state_dict(best["state_dict"])
     model.eval()
@@ -111,7 +111,7 @@ def calc_lightweight_cnn_site_scores_from_site_loader(
 @torch.no_grad()
 def calc_lightweight_cnn_site_scores(dataloader, best, device="cpu"):
     model = load_lightweight_cnn_site_model(best, device=device)
-    crop_size = int(best.get("crop_size", CROP_SIZE))
+    crop_size = int(best.get("crop_size", crop_size))
 
     all_scores = []
     all_labels = []
@@ -139,16 +139,17 @@ def train_lightweight_cnn_site(
     h5_path,
     train_idx,
     val_idx,
-    crop_size=CROP_SIZE,
-    learning_rate=LEARNING_RATE,
-    epochs=EPOCHS,
-    batch_size=BATCH_SIZE,
-    num_workers=NUM_WORKERS,
+    crop_size=crop_size,
+    learning_rate=learning_rate,
+    epochs=epochs,
+    batch_size=batch_size,
+    num_workers=num_workers,
     device="cpu",
     mean_image=None,
     scale=None,
-    early_stopping_patience=EARLY_STOPPING_PATIENCE,
-    early_stopping_min_delta=EARLY_STOPPING_MIN_DELTA,
+    early_stopping_patience=early_stopping_patience,
+    early_stopping_min_delta=early_stopping_min_delta,
+    crop_cache_path=None,
 ):
     train_loader = make_site_loader(
         h5_path=h5_path,
@@ -160,6 +161,7 @@ def train_lightweight_cnn_site(
         num_workers=num_workers,
         shuffle=True,
         pin_memory=str(device).startswith("cuda"),
+        crop_cache_path=crop_cache_path,
     )
     val_loader = make_site_loader(
         h5_path=h5_path,
@@ -171,6 +173,7 @@ def train_lightweight_cnn_site(
         num_workers=num_workers,
         shuffle=False,
         pin_memory=str(device).startswith("cuda"),
+        crop_cache_path=crop_cache_path,
     )
 
     n_sites = train_loader.dataset.n_sites
@@ -273,18 +276,18 @@ def train_lightweight_cnn_site(
         device=device,
     )
 
-    thresholds = np.full(n_sites, CNN_SITE_DECISION_THRESHOLD, dtype=np.float32)
+    thresholds = np.full(n_sites, cnn_site_decision_threshold, dtype=np.float32)
     fidelities = np.zeros(n_sites, dtype=np.float32)
     for q in range(n_sites):
         fidelities[q] = classification_fidelity(
             val_scores[:, q],
             val_labels[:, q],
-            CNN_SITE_DECISION_THRESHOLD,
+            cnn_site_decision_threshold,
         )
 
     return {
-        "method": LIGHTWEIGHT_CNN_SITE_METHOD,
-        "architecture": LIGHTWEIGHT_CNN_SITE_ARCHITECTURE,
+        "method": lightweight_cnn_site_method,
+        "architecture": lightweight_cnn_site_architecture,
         "state_dict": best_state,
         "crop_size": int(crop_size),
         "threshold": thresholds,
@@ -304,6 +307,7 @@ def train_lightweight_cnn_site(
         "learning_rate": float(learning_rate),
         "epochs": int(epochs),
         "batch_size": int(batch_size),
+        "crop_cache_path": None if crop_cache_path is None else str(crop_cache_path),
     }
 
 
@@ -377,8 +381,7 @@ def plot_learning_curves(history, output_path, title=None, best_epoch=None):
     return output_path
 
 
-def evaluate_lightweight_cnn_site_model(dataloader, best, device="cpu"):
-    scores, labels = calc_lightweight_cnn_site_scores(dataloader, best, device=device)
+def evaluate_lightweight_cnn_site_scores_labels(scores, labels, best):
     thresholds = np.asarray(best["threshold"])
 
     fids = np.zeros(labels.shape[1], dtype=np.float32)
@@ -403,6 +406,11 @@ def evaluate_lightweight_cnn_site_model(dataloader, best, device="cpu"):
     }
 
 
+def evaluate_lightweight_cnn_site_model(dataloader, best, device="cpu"):
+    scores, labels = calc_lightweight_cnn_site_scores(dataloader, best, device=device)
+    return evaluate_lightweight_cnn_site_scores_labels(scores, labels, best)
+
+
 def run_one_split(
     h5_path,
     split_seed,
@@ -415,6 +423,7 @@ def run_one_split(
     device,
     early_stopping_patience,
     early_stopping_min_delta,
+    crop_cache_path=None,
 ):
     with h5py.File(h5_path, "r") as f:
         n_samples = f["images"].shape[0]
@@ -441,27 +450,48 @@ def run_one_split(
         scale=scale,
         early_stopping_patience=early_stopping_patience,
         early_stopping_min_delta=early_stopping_min_delta,
+        crop_cache_path=crop_cache_path,
     )
 
-    test_loader = DataLoader(
-        H5Dataset(
-            h5_path,
+    if crop_cache_path is None:
+        test_loader = DataLoader(
+            H5Dataset(
+                h5_path,
+                indices=test_idx,
+                mean_image=mean_image,
+                scale=scale,
+            ),
+            batch_size=eval_batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=str(device).startswith("cuda"),
+            persistent_workers=num_workers > 0,
+        )
+        test_metrics = evaluate_lightweight_cnn_site_model(
+            test_loader,
+            trained,
+            device=device,
+        )
+    else:
+        test_loader = make_site_loader(
+            h5_path=h5_path,
             indices=test_idx,
+            crop_size=crop_size,
             mean_image=mean_image,
             scale=scale,
-        ),
-        batch_size=eval_batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=str(device).startswith("cuda"),
-        persistent_workers=num_workers > 0,
-    )
-
-    test_metrics = evaluate_lightweight_cnn_site_model(
-        test_loader,
-        trained,
-        device=device,
-    )
+            batch_size=eval_batch_size,
+            num_workers=num_workers,
+            shuffle=False,
+            pin_memory=str(device).startswith("cuda"),
+            crop_cache_path=crop_cache_path,
+        )
+        model = load_lightweight_cnn_site_model(trained, device=device)
+        scores, labels = calc_lightweight_cnn_site_scores_from_site_loader(
+            dataloader=test_loader,
+            model=model,
+            device=device,
+        )
+        test_metrics = evaluate_lightweight_cnn_site_scores_labels(scores, labels, trained)
 
     return {
         "seed": split_seed,
@@ -485,23 +515,24 @@ def run_one_split(
         ).copy(),
         "test_total_errors": int(test_metrics["total_errors"]),
         "trained_model": trained,
+        "crop_cache_path": None if crop_cache_path is None else str(crop_cache_path),
     }
 
 
 def main(
     data_dir,
     model_dir,
-    output_dir=DEFAULT_OUTPUT_DIR,
-    crop_size=CROP_SIZE,
-    learning_rate=LEARNING_RATE,
-    epochs=EPOCHS,
-    batch_size=BATCH_SIZE,
-    eval_batch_size=EVAL_BATCH_SIZE,
-    num_workers=NUM_WORKERS,
-    base_seed=BASE_SEED,
-    device=DEVICE,
-    early_stopping_patience=EARLY_STOPPING_PATIENCE,
-    early_stopping_min_delta=EARLY_STOPPING_MIN_DELTA,
+    output_dir=default_output_dir,
+    crop_size=crop_size,
+    learning_rate=learning_rate,
+    epochs=epochs,
+    batch_size=batch_size,
+    eval_batch_size=eval_batch_size,
+    num_workers=num_workers,
+    base_seed=base_seed,
+    device=device,
+    early_stopping_patience=early_stopping_patience,
+    early_stopping_min_delta=early_stopping_min_delta,
     save_learning_curves=True,
 ):
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -516,7 +547,7 @@ def main(
     device = device or get_device()
 
     for h5_path in h5_paths:
-        output_path = model_dir / f"{h5_path.stem}_{LIGHTWEIGHT_CNN_SITE_METHOD}.joblib"
+        output_path = model_dir / f"{h5_path.stem}_{lightweight_cnn_site_method}.joblib"
 
         with h5py.File(h5_path, "r") as f:
             n_samples = f["images"].shape[0]
@@ -542,7 +573,7 @@ def main(
 
         save_obj = {
             **trained,
-            "method": LIGHTWEIGHT_CNN_SITE_METHOD,
+            "method": lightweight_cnn_site_method,
             "h5_path": str(h5_path),
             "seed": base_seed,
             "train_idx": result["train_idx"],
@@ -571,7 +602,7 @@ def main(
             "test_errors_per_site": result["test_errors_per_site"],
             "test_total_errors": result["test_total_errors"],
             "preprocessing": "subtract_train_global_mean_divide_train_pixel_range",
-            "architecture": LIGHTWEIGHT_CNN_SITE_ARCHITECTURE,
+            "architecture": lightweight_cnn_site_architecture,
         }
 
         joblib.dump(save_obj, output_path)
@@ -579,7 +610,7 @@ def main(
         learning_curve_path = None
         if save_learning_curves:
             learning_curve_path = learning_curve_dir / (
-                f"{h5_path.stem}_{LIGHTWEIGHT_CNN_SITE_METHOD}_learning_curve.png"
+                f"{h5_path.stem}_{lightweight_cnn_site_method}_learning_curve.png"
             )
             try:
                 plot_learning_curves(
@@ -604,7 +635,7 @@ def main(
 
 if __name__ == "__main__":
     main(
-        data_dir=DEFAULT_DATA_DIR,
-        model_dir=DEFAULT_MODEL_DIR,
-        output_dir=DEFAULT_OUTPUT_DIR,
+        data_dir=default_data_dir,
+        model_dir=default_model_dir,
+        output_dir=default_output_dir,
     )

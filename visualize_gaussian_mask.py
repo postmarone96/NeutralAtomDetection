@@ -8,17 +8,17 @@ import torch.nn.functional as F
 from scipy.optimize import curve_fit
 
 
-H5_PATH = Path(
+h5_path = Path(
     "/Users/marone/PycharmProjects/neutral-atom-imaging-simulation-main/"
     "test_dataset_1/qubit_dataset_sim_0.01.h5"
 )
-OUT_PATH = Path("output_3x3/gaussian_mask_explanation.png")
-IMAGE_INDEX = 0
-SITE_INDEX = 4
+out_path = Path("output_3x3/gaussian_mask_explanation.png")
+image_index = 0
+site_index = 4
 S = 8
-FIT_SIZE = 9
-SEED = 42
-NORMALIZE_KERNEL = False
+fit_size = 9
+seed = 42
+normalize_kernel = False
 
 
 def circular_gaussian(coords, amp, x0, y0, sigma, offset):
@@ -169,26 +169,26 @@ def best_threshold(scores, labels):
 
 
 def main():
-    OUT_PATH.parent.mkdir(exist_ok=True)
+    out_path.parent.mkdir(exist_ok=True)
 
-    with h5py.File(H5_PATH, "r") as f:
+    with h5py.File(h5_path, "r") as f:
         n = f["images"].shape[0]
-        image = f["images"][IMAGE_INDEX].astype(np.float32)
+        image = f["images"][image_index].astype(np.float32)
         sites = f["sites"][:].astype(np.float32)
         labels_all = f["labels"][:].astype(np.float32)
         images_all = f["images"][:].astype(np.float32)
 
-    train_idx, val_idx, test_idx = split_indices(n, seed=SEED)
+    train_idx, val_idx, test_idx = split_indices(n, seed=seed)
 
-    site = sites[SITE_INDEX]
-    avg_image = compute_average_image(H5_PATH, train_idx)
+    site = sites[site_index]
+    avg_image = compute_average_image(h5_path, train_idx)
     sigma, fit_patch, fitted_patch, fit_bounds = fit_sigma_for_site(
         avg_image,
         site,
-        fit_size=FIT_SIZE,
+        fit_size=fit_size,
     )
 
-    kernel = gaussian_kernel(S, sigma, normalize=NORMALIZE_KERNEL)
+    kernel = gaussian_kernel(S, sigma, normalize=normalize_kernel)
     patch = extract_patch_grid_sample(image, site, S)
     weighted_patch = patch * kernel
     score = float(weighted_patch.sum())
@@ -196,7 +196,7 @@ def main():
     image_vmax = float(avg_image.max())
 
     val_scores = score_images_for_site(images_all[val_idx], site, S, kernel)
-    val_labels = labels_all[val_idx, SITE_INDEX]
+    val_labels = labels_all[val_idx, site_index]
     threshold, val_fidelity = best_threshold(val_scores, val_labels)
 
     x, y = site
@@ -223,7 +223,7 @@ def main():
     axes[0].set_title("Training-set average image + fit window")
 
     axes[1].imshow(fit_patch, **image_cmap_kwargs)
-    axes[1].set_title(f"Average-image fit patch, site {SITE_INDEX}")
+    axes[1].set_title(f"Average-image fit patch, site {site_index}")
 
     axes[2].imshow(fitted_patch, **image_cmap_kwargs)
     axes[2].set_title(f"Fitted circular Gaussian, sigma={sigma:.3f}")
@@ -240,7 +240,7 @@ def main():
             linewidth=1.5,
         )
     )
-    axes[3].set_title(f"Input image {IMAGE_INDEX}, Gaussian window s={S}")
+    axes[3].set_title(f"Input image {image_index}, Gaussian window s={S}")
 
     axes[4].imshow(kernel, cmap="jet")
     axes[4].set_title("Gaussian mask")
@@ -259,8 +259,8 @@ def main():
         ax.set_xticks([])
         ax.set_yticks([])
 
-    fig.savefig(OUT_PATH, dpi=200)
-    print("Saved:", OUT_PATH)
+    fig.savefig(out_path, dpi=200)
+    print("Saved:", out_path)
 
     dark = val_scores[val_labels == 0]
     bright = val_scores[val_labels == 1]
@@ -270,7 +270,7 @@ def main():
     ax.hist(bright, bins=50, alpha=0.6, label="bright")
     ax.axvline(threshold, color="black", linestyle="--", label=f"threshold={threshold:.4g}")
     ax.set_title(
-        f"Gaussian-mask validation scores, site {SITE_INDEX}\n"
+        f"Gaussian-mask validation scores, site {site_index}\n"
         f"s={S}, sigma={sigma:.3f}, val F={val_fidelity:.6f}"
     )
     ax.set_xlabel("score = sum(patch * Gaussian mask)")
@@ -278,7 +278,7 @@ def main():
     ax.legend()
     fig.tight_layout()
 
-    hist_path = OUT_PATH.with_name("gaussian_mask_score_histogram.png")
+    hist_path = out_path.with_name("gaussian_mask_score_histogram.png")
     fig.savefig(hist_path, dpi=200)
     print("Saved:", hist_path)
 

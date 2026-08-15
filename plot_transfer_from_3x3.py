@@ -1,4 +1,3 @@
-import argparse
 import re
 from pathlib import Path
 
@@ -13,20 +12,41 @@ from mf_site import make_random_split
 from utils import H5Dataset, extract_patches, get_device
 
 
-MODEL_RE = re.compile(r"qubit_dataset_sim_([0-9]+(?:\.[0-9]+)?)_(.+)\.joblib$")
-H5_RE = re.compile(r"qubit_dataset_sim_([0-9]+(?:\.[0-9]+)?)\.h5$")
+model_re = re.compile(r"qubit_dataset_sim_([0-9]+(?:\.[0-9]+)?)_(.+)\.joblib$")
+h5_re = re.compile(r"qubit_dataset_sim_([0-9]+(?:\.[0-9]+)?)\.h5$")
 
-TARGET_GRID_LABEL = "20x20"
-SOURCE_METHODS = ("mf_site", "mf_array")
+target_grid_label = "20x20"
+source_methods = ("mf_site", "mf_array")
 
-METHOD_LABELS = {
+method_labels = {
     "mf_site": "MF-site",
     "mf_array": "MF-array",
 }
 
+source_model_dir = Path("models_3x3")
+source_data_dir = Path(
+    "/Users/marone/PycharmProjects/"
+    "neutral-atom-imaging-simulation-main/dataset_3x3"
+)
+target_data_dir = Path(
+    "/Users/marone/PycharmProjects/"
+    "neutral-atom-imaging-simulation-main/datasets_20x20"
+)
+native_model_dir = Path("models_20x20")
+output_model_dir = Path("models_3x3_transfer_to_20x20")
+output_dir = Path("output_3x3_transfer_to_20x20")
+batch_size = 256
+num_workers = 0
+device = None
+selected_source_methods = None
+selected_exposures = None
+max_repeats = None
+no_native_comparison = False
+show = False
+
 
 def transfer_method_name(source_method):
-    return f"{source_method}_3x3_transfer_to_{TARGET_GRID_LABEL}"
+    return f"{source_method}_3x3_transfer_to_{target_grid_label}"
 
 
 def normalize_method(method):
@@ -40,7 +60,7 @@ def normalize_method(method):
 
 
 def parse_model_name(path):
-    match = MODEL_RE.fullmatch(path.name)
+    match = model_re.fullmatch(path.name)
     if match is None:
         return None
 
@@ -48,7 +68,7 @@ def parse_model_name(path):
 
 
 def parse_h5_name(path):
-    match = H5_RE.fullmatch(path.name)
+    match = h5_re.fullmatch(path.name)
     if match is None:
         return None
 
@@ -560,7 +580,7 @@ def plot_records(transfer_records, native_records, source_method, output_path):
     if not transfer_records:
         raise ValueError("no transfer records to plot")
 
-    method_label = METHOD_LABELS[source_method]
+    method_label = method_labels[source_method]
     fig, ax = plt.subplots(figsize=(7, 4.5))
 
     transfer_records = sorted(transfer_records, key=lambda r: r["exposure_ms"])
@@ -569,7 +589,7 @@ def plot_records(transfer_records, native_records, source_method, output_path):
         [r["plot_infidelity"] for r in transfer_records],
         marker="o",
         linewidth=1.8,
-        label=f"3x3 {method_label} on {TARGET_GRID_LABEL}",
+        label=f"3x3 {method_label} on {target_grid_label}",
     )
 
     if native_records:
@@ -579,12 +599,12 @@ def plot_records(transfer_records, native_records, source_method, output_path):
             [r["plot_infidelity"] for r in native_records],
             marker="s",
             linewidth=1.8,
-            label=f"{TARGET_GRID_LABEL} {method_label} trained",
+            label=f"{target_grid_label} {method_label} trained",
         )
 
     ax.set_xlabel("Exposure time (ms)")
     ax.set_ylabel("Infidelity, 1 - F")
-    ax.set_title(f"3x3 {method_label} Transfer to {TARGET_GRID_LABEL}")
+    ax.set_title(f"3x3 {method_label} Transfer to {target_grid_label}")
     ax.set_yscale("log")
     ax.grid(True, which="both", alpha=0.3)
     ax.legend()
@@ -595,7 +615,7 @@ def plot_records(transfer_records, native_records, source_method, output_path):
 
 
 def print_table(transfer_records, native_records, source_method):
-    method_label = METHOD_LABELS[source_method]
+    method_label = method_labels[source_method]
     native_by_exposure = {
         record["exposure_s"]: record
         for record in native_records
@@ -631,98 +651,30 @@ def print_table(transfer_records, native_records, source_method):
         )
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description=(
-            f"Apply 3x3 MF-site and MF-array models to {TARGET_GRID_LABEL} datasets by "
-            "mapping each target site to one of 9 large spatial regions."
-        )
-    )
-    parser.add_argument("--source-model-dir", type=Path, default=Path("models_3x3"))
-    parser.add_argument(
-        "--source-data-dir",
-        type=Path,
-        default=Path(
-            "/Users/marone/PycharmProjects/"
-            "neutral-atom-imaging-simulation-main/dataset_3x3"
-        ),
-    )
-    parser.add_argument(
-        "--target-data-dir",
-        type=Path,
-        default=Path(
-            "/Users/marone/PycharmProjects/"
-            "neutral-atom-imaging-simulation-main/datasets_20x20"
-        ),
-    )
-    parser.add_argument("--native-model-dir", type=Path, default=Path("models_20x20"))
-    parser.add_argument(
-        "--output-model-dir",
-        type=Path,
-        default=Path("models_3x3_transfer_to_20x20"),
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=Path("output_3x3_transfer_to_20x20"),
-    )
-    parser.add_argument("--batch-size", type=int, default=256)
-    parser.add_argument("--num-workers", type=int, default=0)
-    parser.add_argument("--device", default=None)
-    parser.add_argument(
-        "--source-method",
-        action="append",
-        choices=SOURCE_METHODS,
-        default=None,
-        help="Source method to transfer. Defaults to both mf_site and mf_array.",
-    )
-    parser.add_argument(
-        "--exposure",
-        action="append",
-        type=float,
-        default=None,
-        help="Exposure in seconds to run. Can be passed multiple times.",
-    )
-    parser.add_argument(
-        "--max-repeats",
-        type=int,
-        default=None,
-        help="Limit repeats for a quick smoke test.",
-    )
-    parser.add_argument(
-        "--no-native-comparison",
-        action="store_true",
-        help=f"Do not add existing {TARGET_GRID_LABEL}-trained native curves.",
-    )
-    parser.add_argument("--show", action="store_true")
-    return parser.parse_args()
-
-
 def main():
-    args = parse_args()
-    device = args.device or get_device()
-    source_methods = args.source_method or list(SOURCE_METHODS)
+    selected_device = device or get_device()
+    methods_to_run = selected_source_methods or list(source_methods)
 
-    args.output_model_dir.mkdir(parents=True, exist_ok=True)
-    args.output_dir.mkdir(parents=True, exist_ok=True)
+    output_model_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    target_h5_by_exposure = collect_h5_files(args.target_data_dir, args.exposure)
-    source_h5_by_exposure = collect_h5_files(args.source_data_dir, args.exposure)
+    target_h5_by_exposure = collect_h5_files(target_data_dir, selected_exposures)
+    source_h5_by_exposure = collect_h5_files(source_data_dir, selected_exposures)
 
     if not target_h5_by_exposure:
-        raise RuntimeError(f"no target h5 files found in {args.target_data_dir}")
+        raise RuntimeError(f"no target h5 files found in {target_data_dir}")
 
     any_transfer_records = False
 
-    for source_method in source_methods:
-        method_label = METHOD_LABELS[source_method]
+    for source_method in methods_to_run:
+        method_label = method_labels[source_method]
         source_models = collect_source_models(
-            args.source_model_dir,
+            source_model_dir,
             source_method,
-            args.exposure,
+            selected_exposures,
         )
         if not source_models:
-            print(f"No source {method_label} models found in {args.source_model_dir}")
+            print(f"No source {method_label} models found in {source_model_dir}")
             continue
 
         transfer_records = []
@@ -731,12 +683,12 @@ def main():
         for exposure_s in sorted(source_models):
             target_h5_path = target_h5_by_exposure.get(exposure_s)
             if target_h5_path is None:
-                print(f"Skipping {exposure_s:g}: no matching {TARGET_GRID_LABEL} h5 file")
+                print(f"Skipping {exposure_s:g}: no matching {target_grid_label} h5 file")
                 continue
 
             source_model_path = source_models[exposure_s]
             output_model_path = (
-                args.output_model_dir
+                output_model_dir
                 / f"{target_h5_path.stem}_{method_transfer_name}.joblib"
             )
 
@@ -752,10 +704,10 @@ def main():
                 source_h5_by_exposure=source_h5_by_exposure,
                 source_method=source_method,
                 exposure_s=exposure_s,
-                batch_size=args.batch_size,
-                num_workers=args.num_workers,
-                device=device,
-                max_repeats=args.max_repeats,
+                batch_size=batch_size,
+                num_workers=num_workers,
+                device=selected_device,
+                max_repeats=max_repeats,
             )
             joblib.dump(result, output_model_path)
             print(
@@ -772,17 +724,17 @@ def main():
 
         any_transfer_records = True
         native_records = []
-        if not args.no_native_comparison:
+        if not no_native_comparison:
             native_records = collect_native_records(
-                args.native_model_dir,
+                native_model_dir,
                 source_method,
-                args.exposure,
+                selected_exposures,
             )
 
         print_table(transfer_records, native_records, source_method)
 
-        output_plot = args.output_dir / (
-            f"fidelity_vs_exposure_3x3_{source_method}_transfer_to_{TARGET_GRID_LABEL}.png"
+        output_plot = output_dir / (
+            f"fidelity_vs_exposure_3x3_{source_method}_transfer_to_{target_grid_label}.png"
         )
         plot_records(transfer_records, native_records, source_method, output_plot)
         print(f"\nSaved plot: {output_plot}")
@@ -790,7 +742,7 @@ def main():
     if not any_transfer_records:
         raise RuntimeError("no transfer records were generated")
 
-    if args.show:
+    if show:
         plt.show()
     else:
         plt.close("all")

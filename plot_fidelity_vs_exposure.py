@@ -16,20 +16,20 @@ from mf_site import calc_best_scores
 from utils import H5Dataset
 
 
-MODEL_RE = re.compile(r"qubit_dataset_sim_([0-9]+(?:\.[0-9]+)?)_(.+)\.joblib$")
-DEFAULT_DATA_DIR = Path("dataset_3x3")
-DEFAULT_MODEL_DIR = Path("models_3x3")
-DEFAULT_OUTPUT_DIR = Path("output_3x3")
-BATCH_SIZE = 500
-NUM_WORKERS = 0
-DEVICE = "cpu"
-SELECTED_EXPOSURES = None
-PLOT_SCORE_HISTOGRAMS = False
-HIST_METHODS = None
-MAX_HIST_REPEATS = None
-SHOW = False
+model_re = re.compile(r"qubit_dataset_sim_([0-9]+(?:\.[0-9]+)?)_(.+)\.joblib$")
+default_data_dir = Path("dataset_3x3")
+default_model_dir = Path("models_3x3")
+default_output_dir = Path("output_3x3")
+batch_size = 500
+num_workers = 0
+device = "cpu"
+selected_exposures = None
+plot_score_histograms = False
+hist_methods = None
+max_hist_repeats = None
+show = False
 
-METHOD_LABELS = {
+method_labels = {
     "square": "Square",
     "square_real": "Square real",
     "gaussian": "Gaussian",
@@ -50,7 +50,7 @@ METHOD_LABELS = {
     "image_analysis_projection": "Wei Projection",
 }
 
-PLOT_METHODS = {
+plot_methods = {
     # "square",
     # "square_real",
     # "gaussian",
@@ -105,11 +105,11 @@ def normalize_method(method):
 
 
 def display_method_label(method):
-    if method in METHOD_LABELS:
-        return METHOD_LABELS[method]
+    if method in method_labels:
+        return method_labels[method]
 
     normalized = normalize_method(method)
-    label = METHOD_LABELS.get(normalized, method)
+    label = method_labels.get(normalized, method)
 
     split_match = re.fullmatch(
         r"(cnn_array|cnn_site|lightweight_cnn_site|mf_site|mf_array|mf_array_gaussian)_([0-9]+)_splits",
@@ -124,7 +124,7 @@ def display_method_label(method):
 
 
 def parse_model_name(path):
-    match = MODEL_RE.fullmatch(path.name)
+    match = model_re.fullmatch(path.name)
     if match is None:
         return None
 
@@ -612,17 +612,17 @@ def print_table(records):
 
 
 def main(
-    model_dir=DEFAULT_MODEL_DIR,
-    data_dir=DEFAULT_DATA_DIR,
-    output_dir=DEFAULT_OUTPUT_DIR,
-    batch_size=BATCH_SIZE,
-    num_workers=NUM_WORKERS,
-    device=DEVICE,
-    selected_exposures=SELECTED_EXPOSURES,
-    make_score_histograms=PLOT_SCORE_HISTOGRAMS,
-    hist_methods=HIST_METHODS,
-    max_hist_repeats=MAX_HIST_REPEATS,
-    show=SHOW,
+    model_dir=default_model_dir,
+    data_dir=default_data_dir,
+    output_dir=default_output_dir,
+    batch_size=batch_size,
+    num_workers=num_workers,
+    device=device,
+    selected_exposures=selected_exposures,
+    make_score_histograms=plot_score_histograms,
+    hist_methods=hist_methods,
+    max_hist_repeats=max_hist_repeats,
+    show=show,
 ):
     output_path = output_dir / "fidelity_vs_exposure.png"
 
@@ -631,7 +631,7 @@ def main(
     records = collect_records(model_dir, selected_exposures=selected_exposures)
     records = [
         record for record in records
-        if method_matches(record["method"], PLOT_METHODS)
+        if method_matches(record["method"], plot_methods)
     ]
 
     print_table(records)
@@ -659,7 +659,7 @@ def main(
 
 if __name__ == "__main__":
     main(
-        model_dir=DEFAULT_MODEL_DIR,
-        data_dir=DEFAULT_DATA_DIR,
-        output_dir=DEFAULT_OUTPUT_DIR,
+        model_dir=default_model_dir,
+        data_dir=default_data_dir,
+        output_dir=default_output_dir,
     )

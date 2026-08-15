@@ -8,13 +8,13 @@ import numpy as np
 from matplotlib.colors import LogNorm
 
 
-MODEL_RE = re.compile(r"qubit_dataset_sim_([0-9]+(?:\.[0-9]+)?)_(.+)\.joblib$")
-COLORBAR_MIN = 1e-4
-COLORBAR_MAX = 2e-3
+model_re = re.compile(r"qubit_dataset_sim_([0-9]+(?:\.[0-9]+)?)_(.+)\.joblib$")
+colorbar_min = 1e-4
+colorbar_max = 2e-3
 
-METHOD_ORDER = ["square", "gaussian", "mf_site", "mf_array", "mf_array_gaussian"]
+method_order = ["square", "gaussian", "mf_site", "mf_array", "mf_array_gaussian"]
 
-METHOD_LABELS = {
+method_labels = {
     "square": "Square",
     "gaussian": "Gaussian",
     "mf_site": "MF-site",
@@ -22,7 +22,7 @@ METHOD_LABELS = {
     "mf_array_gaussian": "MF-array Gaussian",
 }
 
-METHOD_COLORS = {
+method_colors = {
     "square": "tab:orange",
     "gaussian": "tab:green",
     "mf_site": "tab:blue",
@@ -42,7 +42,7 @@ def normalize_method(method):
 
 
 def parse_model_name(path):
-    match = MODEL_RE.fullmatch(path.name)
+    match = model_re.fullmatch(path.name)
     if match is None:
         return None
 
@@ -57,7 +57,7 @@ def get_infidelity_record(path):
         return None
 
     exposure_s, exposure_ms, method = parsed
-    if method not in METHOD_ORDER:
+    if method not in method_order:
         return None
 
     model = joblib.load(path)
@@ -108,7 +108,7 @@ def collect_records(joblib_dir):
 
 
 def ordered_records(records_by_method):
-    return [records_by_method[m] for m in METHOD_ORDER if m in records_by_method]
+    return [records_by_method[m] for m in method_order if m in records_by_method]
 
 
 def grid_shape(n_sites):
@@ -156,7 +156,7 @@ def make_log_norm(records):
     values = values[np.isfinite(values)]
     positive = values[values > 0]
 
-    return LogNorm(vmin=COLORBAR_MIN, vmax=COLORBAR_MAX)
+    return LogNorm(vmin=colorbar_min, vmax=colorbar_max)
 
 
 def colorbar_ticks(norm):
@@ -213,7 +213,7 @@ def plot_exposure(records_by_method, output_dir):
 
         ax.set_xticks([])
         ax.set_yticks([])
-        ax.set_title(METHOD_LABELS[record["method"]])
+        ax.set_title(method_labels[record["method"]])
 
         for row_idx in range(n_rows):
             for col_idx in range(n_cols):

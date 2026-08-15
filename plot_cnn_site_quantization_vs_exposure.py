@@ -6,16 +6,16 @@ import joblib
 import matplotlib.pyplot as plt
 
 
-RESULTS_PATH = Path("output_3x3/cnn_site_quantization_vs_exposure.joblib")
-CSV_PATH = None
-OUTPUT_PATH = Path("output_3x3/cnn_site_quantization_vs_exposure.png")
-DELTA_OUTPUT_PATH = Path("output_3x3/cnn_site_quantization_delta_fidelity.png")
-ERROR_OUTPUT_PATH = Path("output_3x3/cnn_site_quantization_error_increase.png")
-PLOT_METRIC = "mean_infidelity"  # "mean_infidelity" or "mean_fidelity"
-X_MIN_MS = 10.0
-X_MAX_MS = 100.0
-FIDELITY_TOLERANCE_PERCENT_POINTS = 0.05
-SHOW = False
+results_path = Path("output_3x3/cnn_site_quantization_vs_exposure.joblib")
+csv_path = None
+output_path = Path("output_3x3/cnn_site_quantization_vs_exposure.png")
+delta_output_path = Path("output_3x3/cnn_site_quantization_delta_fidelity.png")
+error_output_path = Path("output_3x3/cnn_site_quantization_error_increase.png")
+plot_metric = "mean_infidelity"  # "mean_infidelity" or "mean_fidelity"
+x_min_ms = 10.0
+x_max_ms = 100.0
+fidelity_tolerance_percent_points = 0.05
+show = False
 
 
 def method_sort_key(method):
@@ -199,16 +199,16 @@ def plot_relative_error_increase(records, output_path, x_min_ms, x_max_ms):
 
 
 def main(
-    results_path=RESULTS_PATH,
-    csv_path=CSV_PATH,
-    output_path=OUTPUT_PATH,
-    delta_output_path=DELTA_OUTPUT_PATH,
-    error_output_path=ERROR_OUTPUT_PATH,
-    plot_metric=PLOT_METRIC,
-    x_min_ms=X_MIN_MS,
-    x_max_ms=X_MAX_MS,
-    fidelity_tolerance_percent_points=FIDELITY_TOLERANCE_PERCENT_POINTS,
-    show=SHOW,
+    results_path=results_path,
+    csv_path=csv_path,
+    output_path=output_path,
+    delta_output_path=delta_output_path,
+    error_output_path=error_output_path,
+    plot_metric=plot_metric,
+    x_min_ms=x_min_ms,
+    x_max_ms=x_max_ms,
+    fidelity_tolerance_percent_points=fidelity_tolerance_percent_points,
+    show=show,
 ):
     if plot_metric not in {"mean_infidelity", "mean_fidelity"}:
         raise ValueError("plot_metric must be 'mean_infidelity' or 'mean_fidelity'")

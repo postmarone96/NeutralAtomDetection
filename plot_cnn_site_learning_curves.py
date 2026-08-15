@@ -11,12 +11,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
-MODEL_DIR = Path("models_3x3")
-OUTPUT_DIR = Path("output_3x3/cnn_site_learning_curves")
-SUMMARY_CSV_PATH = OUTPUT_DIR / "cnn_site_learning_curve_summary.csv"
+model_dir = Path("models_3x3")
+output_dir = Path("output_3x3/cnn_site_learning_curves")
+summary_csv_path = output_dir / "cnn_site_learning_curve_summary.csv"
 
-MODEL_RE = re.compile(r"qubit_dataset_sim_([0-9]+(?:\.[0-9]+)?)_(.+)\.joblib$")
-MODEL_PATTERNS = (
+model_re = re.compile(r"qubit_dataset_sim_([0-9]+(?:\.[0-9]+)?)_(.+)\.joblib$")
+model_patterns = (
     "*cnn_site*.joblib",
 )
 
@@ -33,7 +33,7 @@ def unique_model_paths(model_dir, patterns):
 
 
 def parse_model_name(path):
-    match = MODEL_RE.fullmatch(path.name)
+    match = model_re.fullmatch(path.name)
     if match is None:
         return None
     exposure_s = float(match.group(1))
@@ -140,10 +140,10 @@ def save_summary(rows, output_path):
 
 
 def main(
-    model_dir=MODEL_DIR,
-    output_dir=OUTPUT_DIR,
-    summary_csv_path=SUMMARY_CSV_PATH,
-    model_patterns=MODEL_PATTERNS,
+    model_dir=model_dir,
+    output_dir=output_dir,
+    summary_csv_path=summary_csv_path,
+    model_patterns=model_patterns,
 ):
     rows = []
 
@@ -210,8 +210,8 @@ def main(
 
 if __name__ == "__main__":
     main(
-        model_dir=MODEL_DIR,
-        output_dir=OUTPUT_DIR,
-        summary_csv_path=SUMMARY_CSV_PATH,
-        model_patterns=MODEL_PATTERNS,
+        model_dir=model_dir,
+        output_dir=output_dir,
+        summary_csv_path=summary_csv_path,
+        model_patterns=model_patterns,
     )

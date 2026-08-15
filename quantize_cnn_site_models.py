@@ -14,27 +14,27 @@ from cnn_site import CnnSiteNet, make_site_loader
 from mf_site import classification_fidelity
 
 
-MODEL_RE = re.compile(r"qubit_dataset_sim_([0-9]+(?:\.[0-9]+)?)_cnn_site\.joblib$")
+model_re = re.compile(r"qubit_dataset_sim_([0-9]+(?:\.[0-9]+)?)_cnn_site\.joblib$")
 
-DATA_DIR = Path("dataset_3x3")
-MODEL_DIR = Path("models_3x3")
-OUTPUT_DIR = Path("output_3x3")
+data_dir = Path("dataset_3x3")
+model_dir = Path("models_3x3")
+output_dir = Path("output_3x3")
 
-BITS = [16, 12, 10, 8]
-BATCH_SIZE = 256
-NUM_WORKERS = 0
-DEVICE = "cuda"
+bits = [16, 12, 10, 8]
+batch_size = 256
+num_workers = 0
+device = "cuda"
 
-MAX_CALIB_IMAGES = None
-MIN_FRAC_BITS = -8
-MAX_FRAC_BITS = 16
-ACTIVATION_HEADROOM = 1.10
-WEIGHT_HEADROOM = 1.10
+max_calib_images = None
+min_frac_bits = -8
+max_frac_bits = 16
+activation_headroom = 1.10
+weight_headroom = 1.10
 
 # Set to None for all exposures, or e.g. [0.03] for only 30 ms.
-SELECTED_EXPOSURES = None
+selected_exposures = None
 
-LAYER_SPECS = (
+layer_specs = (
     ("conv1", "features.0", "input", "conv1_relu"),
     ("conv2", "features.2", "conv1_relu", "conv2_relu"),
     ("conv3", "features.4", "conv2_relu", "conv3_relu"),
@@ -42,7 +42,7 @@ LAYER_SPECS = (
     ("fc2", "classifier.2", "fc1_relu", "logits"),
 )
 
-ACTIVATION_SIGNEDNESS = {
+activation_signedness = {
     "input": True,
     "conv1_relu": False,
     "conv2_relu": False,
@@ -112,7 +112,7 @@ def choose_fixed_format(
 
 
 def parse_model_path(path):
-    match = MODEL_RE.fullmatch(path.name)
+    match = model_re.fullmatch(path.name)
     if match is None:
         return None
     exposure_s = float(match.group(1))
@@ -175,7 +175,7 @@ def forward_named_tensors(model, crops):
 
 @torch.no_grad()
 def collect_activation_maxima(model, dataloader, device, max_calib_images):
-    maxima = {name: 0.0 for name in ACTIVATION_SIGNEDNESS}
+    maxima = {name: 0.0 for name in activation_signedness}
     seen_images = 0
 
     model.eval()
@@ -224,7 +224,7 @@ def build_quantization_config(
         name: choose_fixed_format(
             max_abs_value=max_abs_value,
             total_bits=activation_bits,
-            signed=ACTIVATION_SIGNEDNESS[name],
+            signed=activation_signedness[name],
             min_frac_bits=min_frac_bits,
             max_frac_bits=max_frac_bits,
             headroom=activation_headroom,
@@ -233,7 +233,7 @@ def build_quantization_config(
     }
 
     layer_formats = {}
-    for layer_name, module_path, input_activation, _output_activation in LAYER_SPECS:
+    for layer_name, module_path, input_activation, _output_activation in layer_specs:
         module = module_by_path(model, module_path)
         weight_format = choose_fixed_format(
             max_abs_value=float(torch.max(torch.abs(module.weight)).item()),
@@ -602,19 +602,19 @@ def print_table(records):
 
 
 def main(
-    model_dir=MODEL_DIR,
-    data_dir=DATA_DIR,
-    output_dir=OUTPUT_DIR,
-    bits=BITS,
-    batch_size=BATCH_SIZE,
-    num_workers=NUM_WORKERS,
-    device=DEVICE,
-    max_calib_images=MAX_CALIB_IMAGES,
-    min_frac_bits=MIN_FRAC_BITS,
-    max_frac_bits=MAX_FRAC_BITS,
-    activation_headroom=ACTIVATION_HEADROOM,
-    weight_headroom=WEIGHT_HEADROOM,
-    selected_exposures=SELECTED_EXPOSURES,
+    model_dir=model_dir,
+    data_dir=data_dir,
+    output_dir=output_dir,
+    bits=bits,
+    batch_size=batch_size,
+    num_workers=num_workers,
+    device=device,
+    max_calib_images=max_calib_images,
+    min_frac_bits=min_frac_bits,
+    max_frac_bits=max_frac_bits,
+    activation_headroom=activation_headroom,
+    weight_headroom=weight_headroom,
+    selected_exposures=selected_exposures,
 ):
     model_paths = collect_model_paths(model_dir, selected_exposures)
     if not model_paths:

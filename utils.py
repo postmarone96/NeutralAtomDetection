@@ -95,7 +95,7 @@ def extract_patches(images, sites, s):
     return patches.reshape(Batch, Qubits, s * s)
 
 
-MF_ARRAY_NEIGHBOR_OFFSETS = (
+mf_array_neighbor_offsets = (
     (-1, -1),
     (-1, 0),
     (-1, 1),
@@ -120,7 +120,7 @@ def local_neighbor_means(patch_means, q, grid_side):
     zero = patch_means.new_zeros((patch_means.shape[0], 1))
     values = []
 
-    for drow, dcol in MF_ARRAY_NEIGHBOR_OFFSETS:
+    for drow, dcol in mf_array_neighbor_offsets:
         neighbor_row = row + drow
         neighbor_col = col + dcol
 
@@ -182,7 +182,7 @@ def local_neighbor_values(site_values, q, grid_side):
     zero = site_values.new_zeros((site_values.shape[0], 1))
     values = []
 
-    for drow, dcol in MF_ARRAY_NEIGHBOR_OFFSETS:
+    for drow, dcol in mf_array_neighbor_offsets:
         neighbor_row = row + drow
         neighbor_col = col + dcol
 
@@ -246,7 +246,7 @@ def learn_W(
                 feature_dim = patch_dim + (n_qubits - 1) + 1
             else:
                 grid_side = grid_side_from_n_qubits(n_qubits)
-                feature_dim = patch_dim + len(MF_ARRAY_NEIGHBOR_OFFSETS) + 1
+                feature_dim = patch_dim + len(mf_array_neighbor_offsets) + 1
 
         if use_global_mf_array:
             feature_dim = patch_dim + (n_qubits - 1) + 1
@@ -331,7 +331,7 @@ def calc_score(
     if mf_array:
         patch_dim = s * s
         global_feature_dim = patch_dim + (n_qubits - 1) + 1
-        local_feature_dim = patch_dim + len(MF_ARRAY_NEIGHBOR_OFFSETS) + 1
+        local_feature_dim = patch_dim + len(mf_array_neighbor_offsets) + 1
         feature_dim = int(W.shape[1])
 
         if mf_array_neighbor_indices is not None:

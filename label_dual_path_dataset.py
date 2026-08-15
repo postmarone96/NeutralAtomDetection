@@ -8,22 +8,22 @@ from sklearn.mixture import GaussianMixture
 from tqdm.auto import tqdm
 
 
-INPUT_PATH = Path("/Users/marone/Downloads/runs_4043_fast_imaging.h5")
-OUTPUT_PATH = Path("dataset_labeled/runs_4043_fast_imaging_labeled.h5")
-SITE_DIAGNOSTIC_PATH = Path("dataset_labeled/runs_4043_fast_imaging_sites.png")
+input_path = Path("/Users/marone/Downloads/runs_4043_fast_imaging.h5")
+output_path = Path("dataset_labeled/runs_4043_fast_imaging_labeled.h5")
+site_diagnostic_path = Path("dataset_labeled/runs_4043_fast_imaging_sites.png")
 
-INPUT_IMAGE_KEY = "image_2"
-LABEL_IMAGE_KEY = "image_1"
+input_image_key = "image_2"
+label_image_key = "image_1"
 
-AVERAGE_BATCH_SIZE = 64
-SCORE_BATCH_SIZE = 32
-FIT_SIZE = 17
-PEAK_MIN_DISTANCE = 18
-PEAK_SMOOTH_SIGMA = 2.0
-SITE_PEAK_GMM_COMPONENTS = 2
-SITE_PEAK_COMPONENT = "bright"
-ROW_CLUSTER_GAP_FACTOR = 0.55
-THRESHOLD_MODE = "per_site"
+average_batch_size = 64
+score_batch_size = 32
+fit_size = 17
+peak_min_distance = 18
+peak_smooth_sigma = 2.0
+site_peak_gmm_components = 2
+site_peak_component = "bright"
+row_cluster_gap_factor = 0.55
+threshold_mode = "per_site"
 
 
 def circular_gaussian(coords, amp, x0, y0, sigma, offset):
@@ -67,7 +67,7 @@ def find_peak_candidates(avg_image, min_distance, smooth_sigma):
 
 def choose_site_peaks(candidates, values):
     gmm = GaussianMixture(
-        n_components=SITE_PEAK_GMM_COMPONENTS,
+        n_components=site_peak_gmm_components,
         covariance_type="full",
         random_state=0,
         n_init=10,
@@ -78,8 +78,8 @@ def choose_site_peaks(candidates, values):
     bright_component = int(np.argmax(means))
     labels = gmm.predict(values.reshape(-1, 1))
 
-    if SITE_PEAK_COMPONENT != "bright":
-        raise ValueError(f"unsupported SITE_PEAK_COMPONENT: {SITE_PEAK_COMPONENT}")
+    if site_peak_component != "bright":
+        raise ValueError(f"unsupported SITE_PEAK_COMPONENT: {site_peak_component}")
 
     selected = candidates[labels == bright_component]
     selected_values = values[labels == bright_component]
@@ -158,7 +158,7 @@ def sort_sites_row_major(fitted_sites):
     if positive_diffs.size == 0:
         rows = [ordered]
     else:
-        row_gap = np.median(positive_diffs) / max(ROW_CLUSTER_GAP_FACTOR, 1e-6)
+        row_gap = np.median(positive_diffs) / max(row_cluster_gap_factor, 1e-6)
         split_indices = np.flatnonzero(y_diffs > row_gap) + 1
         rows = np.split(ordered, split_indices)
 
@@ -272,7 +272,7 @@ def write_labeled_dataset(
     tmp_path = output_path.with_name(f"{output_path.name}.tmp")
 
     with h5py.File(input_path, "r") as src, h5py.File(tmp_path, "w") as dst:
-        src.copy(INPUT_IMAGE_KEY, dst, name="images")
+        src.copy(input_image_key, dst, name="images")
         dst.create_dataset("labels", data=labels.astype(np.uint8), compression="gzip")
         dst.create_dataset("sites", data=fitted_sites[:, :2].astype(np.float32))
         dst.create_dataset("label_scores", data=scores.astype(np.float32), compression="gzip")
@@ -284,10 +284,10 @@ def write_labeled_dataset(
         )
 
         dst.attrs["source_file"] = str(input_path)
-        dst.attrs["input_image_key"] = INPUT_IMAGE_KEY
-        dst.attrs["label_image_key"] = LABEL_IMAGE_KEY
+        dst.attrs["input_image_key"] = input_image_key
+        dst.attrs["label_image_key"] = label_image_key
         dst.attrs["label_method"] = "average_image_site_fit_gaussian_mask_two_gaussian_threshold"
-        dst.attrs["threshold_mode"] = THRESHOLD_MODE
+        dst.attrs["threshold_mode"] = threshold_mode
         dst.attrs["n_sites"] = int(fitted_sites.shape[0])
         dst.attrs["site_detection_n_candidates"] = site_detection["n_candidates"]
         dst.attrs["site_detection_n_selected"] = site_detection["n_selected"]
@@ -335,14 +335,14 @@ def save_site_diagnostic(avg_image, fitted_sites, output_path):
 
 def main():
     avg_image = compute_average_image(
-        h5_path=INPUT_PATH,
-        image_key=LABEL_IMAGE_KEY,
-        batch_size=AVERAGE_BATCH_SIZE,
+        h5_path=input_path,
+        image_key=label_image_key,
+        batch_size=average_batch_size,
     )
     candidates, peak_values = find_peak_candidates(
         avg_image=avg_image,
-        min_distance=PEAK_MIN_DISTANCE,
-        smooth_sigma=PEAK_SMOOTH_SIGMA,
+        min_distance=peak_min_distance,
+        smooth_sigma=peak_smooth_sigma,
     )
     initial_sites, site_detection = choose_site_peaks(
         candidates=candidates,
@@ -351,29 +351,29 @@ def main():
     fitted_sites = fit_site_gaussians(
         avg_image=avg_image,
         initial_sites=initial_sites,
-        fit_size=FIT_SIZE,
+        fit_size=fit_size,
     )
     save_site_diagnostic(
         avg_image=avg_image,
         fitted_sites=fitted_sites,
-        output_path=SITE_DIAGNOSTIC_PATH,
+        output_path=site_diagnostic_path,
     )
     masks = gaussian_masks(
         image_shape=avg_image.shape,
         fitted_sites=fitted_sites,
     )
     scores = score_label_images(
-        h5_path=INPUT_PATH,
-        image_key=LABEL_IMAGE_KEY,
+        h5_path=input_path,
+        image_key=label_image_key,
         masks=masks,
-        batch_size=SCORE_BATCH_SIZE,
+        batch_size=score_batch_size,
     )
-    thresholds, threshold_fit = choose_thresholds(scores, THRESHOLD_MODE)
+    thresholds, threshold_fit = choose_thresholds(scores, threshold_mode)
     labels = scores >= thresholds[None, :]
 
     write_labeled_dataset(
-        input_path=INPUT_PATH,
-        output_path=OUTPUT_PATH,
+        input_path=input_path,
+        output_path=output_path,
         labels=labels,
         fitted_sites=fitted_sites,
         avg_image=avg_image,
@@ -382,8 +382,8 @@ def main():
         site_detection=site_detection,
     )
 
-    print("Saved:", OUTPUT_PATH)
-    print("Saved site diagnostic:", SITE_DIAGNOSTIC_PATH)
+    print("Saved:", output_path)
+    print("Saved site diagnostic:", site_diagnostic_path)
     print(f"Detected {fitted_sites.shape[0]} sites from {site_detection['n_candidates']} peak candidates")
     print("Site detection:")
     print(site_detection)

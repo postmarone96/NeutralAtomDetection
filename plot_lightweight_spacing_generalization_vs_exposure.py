@@ -23,25 +23,25 @@ from mf_site import classification_fidelity
 from utils import H5Dataset
 
 
-SPACING_DATA_DIR = Path("spacing_datasets_3x3")
-DATA_DIR = Path("dataset_3x3")
-MODEL_DIR = Path("models_3x3")
-OUTPUT_DIR = Path("output_3x3")
+spacing_data_dir = Path("spacing_datasets_3x3")
+data_dir = Path("dataset_3x3")
+model_dir = Path("models_3x3")
+output_dir = Path("output_3x3")
 
-OUTPUT_PATH = OUTPUT_DIR / "lightweight_spacing_generalization_vs_exposure.png"
-CSV_OUTPUT_PATH = OUTPUT_DIR / "lightweight_spacing_generalization_vs_exposure.csv"
+output_path = output_dir / "lightweight_spacing_generalization_vs_exposure.png"
+csv_output_path = output_dir / "lightweight_spacing_generalization_vs_exposure.csv"
 
-FIXED_SPACING_PX = 7.0
-SPACING_CENTER_PX = 16.0
-SPACING_SCALE_PX = 12.0
-BASE_SEED = 42
-BATCH_SIZE = 2048
-NUM_WORKERS = 0
-DEVICE = "cpu"
+fixed_spacing_px = 7.0
+spacing_center_px = 16.0
+spacing_scale_px = 12.0
+base_seed = 42
+batch_size = 2048
+num_workers = 0
+device = "cpu"
 
-MODEL_RE = re.compile(r"qubit_dataset_sim_([0-9]+(?:\.[0-9]+)?)\.h5$")
+model_re = re.compile(r"qubit_dataset_sim_([0-9]+(?:\.[0-9]+)?)\.h5$")
 
-METHODS = (
+methods = (
     {
         "method": "lightweight_cnn_site",
         "label": "Tiny CNN-site",
@@ -64,7 +64,7 @@ METHODS = (
 
 
 def parse_exposure_from_h5(path):
-    match = MODEL_RE.fullmatch(path.name)
+    match = model_re.fullmatch(path.name)
     if match is None:
         return None
     exposure_s = float(match.group(1))
@@ -91,7 +91,7 @@ def resolve_model_path(model_dir, h5_path, suffix):
     return None
 
 
-def get_test_indices(h5_path, model_object=None, seed=BASE_SEED):
+def get_test_indices(h5_path, model_object=None, seed=base_seed):
     if model_object is not None and "test_idx" in model_object:
         return np.asarray(model_object["test_idx"], dtype=np.int64)
 
@@ -148,9 +148,9 @@ class FixedSpacingGlobalSitesDataset(Dataset):
         h5_path,
         indices,
         crop_size,
-        fixed_spacing_px=FIXED_SPACING_PX,
-        spacing_center_px=SPACING_CENTER_PX,
-        spacing_scale_px=SPACING_SCALE_PX,
+        fixed_spacing_px=fixed_spacing_px,
+        spacing_center_px=spacing_center_px,
+        spacing_scale_px=spacing_scale_px,
         image_key="images",
         label_key="labels",
         site_key="sites",
@@ -256,14 +256,14 @@ def make_fixed_spacing_loader(
     num_workers,
 ):
     spacing_normalization = model_object.get("spacing_normalization", {})
-    spacing_center_px = spacing_normalization.get("center_px", SPACING_CENTER_PX)
-    spacing_scale_px = spacing_normalization.get("scale_px", SPACING_SCALE_PX)
+    spacing_center_px = spacing_normalization.get("center_px", spacing_center_px)
+    spacing_scale_px = spacing_normalization.get("scale_px", spacing_scale_px)
 
     dataset = FixedSpacingGlobalSitesDataset(
         h5_path=h5_path,
         indices=test_idx,
         crop_size=int(model_object.get("crop_size", 20)),
-        fixed_spacing_px=FIXED_SPACING_PX,
+        fixed_spacing_px=fixed_spacing_px,
         spacing_center_px=spacing_center_px,
         spacing_scale_px=spacing_scale_px,
         mean_image=model_object.get("mean_image"),
@@ -289,11 +289,11 @@ def evaluate_standard_lightweight(h5_path, model_object, test_idx, device):
             mean_image=model_object.get("mean_image"),
             scale=model_object.get("scale"),
         ),
-        batch_size=BATCH_SIZE,
+        batch_size=batch_size,
         shuffle=False,
-        num_workers=NUM_WORKERS,
+        num_workers=num_workers,
         pin_memory=False,
-        persistent_workers=NUM_WORKERS > 0,
+        persistent_workers=num_workers > 0,
     )
     scores, labels = calc_lightweight_cnn_site_scores(
         loader,
@@ -312,8 +312,8 @@ def evaluate_spacing_model(h5_path, model_object, test_idx, device):
         h5_path=h5_path,
         test_idx=test_idx,
         model_object=model_object,
-        batch_size=BATCH_SIZE,
-        num_workers=NUM_WORKERS,
+        batch_size=batch_size,
+        num_workers=num_workers,
     )
     model = load_lightweight_spacing_cnn_site_model(model_object, device=device)
     scores, labels, _spacing_px = calc_lightweight_spacing_cnn_site_scores_from_loader(
@@ -329,10 +329,10 @@ def evaluate_spacing_model(h5_path, model_object, test_idx, device):
 
 
 def collect_records(
-    spacing_data_dir=SPACING_DATA_DIR,
-    data_dir=DATA_DIR,
-    model_dir=MODEL_DIR,
-    device=DEVICE,
+    spacing_data_dir=spacing_data_dir,
+    data_dir=data_dir,
+    model_dir=model_dir,
+    device=device,
 ):
     records = []
 
@@ -363,10 +363,10 @@ def collect_records(
         test_idx = get_test_indices(
             h5_path=h5_path,
             model_object=standard_model,
-            seed=BASE_SEED,
+            seed=base_seed,
         )
 
-        for method_spec in METHODS:
+        for method_spec in methods:
             model_path = resolve_model_path(
                 model_dir,
                 h5_path,
@@ -418,7 +418,7 @@ def collect_records(
                     "total_errors": metrics["test_total_errors"],
                     "n_test_images": int(len(test_idx)),
                     "n_sites": int(metrics["test_fidelity"].size),
-                    "fixed_spacing_px": float(FIXED_SPACING_PX),
+                    "fixed_spacing_px": float(fixed_spacing_px),
                     "model_path": str(model_path),
                     "data_path": str(h5_path),
                 }
@@ -461,7 +461,7 @@ def plot_records(records, output_path):
         raise ValueError("no records to plot")
 
     fig, ax = plt.subplots(figsize=(7.4, 5.0))
-    for method_spec in METHODS:
+    for method_spec in methods:
         group = sorted(
             [
                 record for record in records
@@ -494,12 +494,12 @@ def plot_records(records, output_path):
 
 
 def main(
-    spacing_data_dir=SPACING_DATA_DIR,
-    data_dir=DATA_DIR,
-    model_dir=MODEL_DIR,
-    output_path=OUTPUT_PATH,
-    csv_output_path=CSV_OUTPUT_PATH,
-    device=DEVICE,
+    spacing_data_dir=spacing_data_dir,
+    data_dir=data_dir,
+    model_dir=model_dir,
+    output_path=output_path,
+    csv_output_path=csv_output_path,
+    device=device,
 ):
     records = collect_records(
         spacing_data_dir=spacing_data_dir,
@@ -515,10 +515,10 @@ def main(
 
 if __name__ == "__main__":
     main(
-        spacing_data_dir=SPACING_DATA_DIR,
-        data_dir=DATA_DIR,
-        model_dir=MODEL_DIR,
-        output_path=OUTPUT_PATH,
-        csv_output_path=CSV_OUTPUT_PATH,
-        device=DEVICE,
+        spacing_data_dir=spacing_data_dir,
+        data_dir=data_dir,
+        model_dir=model_dir,
+        output_path=output_path,
+        csv_output_path=csv_output_path,
+        device=device,
     )

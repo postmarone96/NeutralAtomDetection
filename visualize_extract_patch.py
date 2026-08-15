@@ -1,4 +1,3 @@
-import argparse
 from pathlib import Path
 
 import h5py
@@ -10,10 +9,23 @@ from matplotlib.patches import Rectangle
 from mf_site import extract_patches
 
 
-DEFAULT_H5_PATH = Path(
+default_h5_path = Path(
     "/Users/marone/PycharmProjects/neutral-atom-imaging-simulation-main/"
     "test_dataset_1/qubit_dataset_sim_0.036.h5"
 )
+
+image_index = 0
+site_index = 2
+s = 2
+zoom = None
+image_key = "images"
+unattenuated_key = "unattenuated_images"
+label_key = "labels"
+site_key = "sites"
+preprocess = "none"
+patch_scale = "image"
+cmap = "viridis"
+save_path = None
 
 
 def preprocess_image_for_display(
@@ -172,62 +184,31 @@ def annotate_patch_values(ax, patch):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Visualize how mf_site.extract_patches samples one patch from one image."
-    )
-    parser.add_argument("h5_path", nargs="?", default=str(DEFAULT_H5_PATH))
-    parser.add_argument("--image-index", type=int, default=0)
-    parser.add_argument("--site-index", type=int, default=2)
-    parser.add_argument("--s", type=int, default=2, help="Patch side length.")
-    parser.add_argument("--zoom", type=float, default=None)
-    parser.add_argument("--image-key", default="images")
-    parser.add_argument("--unattenuated-key", default="unattenuated_images")
-    parser.add_argument("--label-key", default="labels")
-    parser.add_argument("--site-key", default="sites")
-    parser.add_argument(
-        "--preprocess",
-        choices=["none", "mean-scale", "image-mean-scale", "unattenuated-minus-image"],
-        default="none",
-        help=(
-            "Image values to extract patches from. mean-scale matches the sweep scripts "
-            "except it estimates mean/scale from the whole H5 file for visualization."
-        ),
-    )
-    parser.add_argument(
-        "--patch-scale",
-        choices=["image", "patch"],
-        default="image",
-        help="Use image-wide color limits for patches, or autoscale each patch for contrast.",
-    )
-    parser.add_argument("--cmap", default="viridis")
-    parser.add_argument("--save", type=Path, default=None)
-    args = parser.parse_args()
-
-    h5_path = Path(args.h5_path)
+    h5_path = Path(default_h5_path)
     if not h5_path.exists():
-        raise FileNotFoundError(f"{h5_path} does not exist. Pass the H5 path as the first argument.")
+        raise FileNotFoundError(f"{h5_path} does not exist. Edit default_h5_path.")
 
     with h5py.File(h5_path, "r") as f:
-        raw_image = f[args.image_key][args.image_index].astype(np.float32)
-        sites = f[args.site_key][:].astype(np.float32)
+        raw_image = f[image_key][image_index].astype(np.float32)
+        sites = f[site_key][:].astype(np.float32)
         all_images = None
-        if args.preprocess == "mean-scale":
-            all_images = f[args.image_key][:].astype(np.float32)
+        if preprocess == "mean-scale":
+            all_images = f[image_key][:].astype(np.float32)
         unattenuated_image = None
-        if args.preprocess == "unattenuated-minus-image":
-            if args.unattenuated_key not in f:
+        if preprocess == "unattenuated-minus-image":
+            if unattenuated_key not in f:
                 raise KeyError(
-                    f"{args.unattenuated_key!r} was not found in {h5_path}. "
-                    "Use --preprocess none or pass the correct --unattenuated-key."
+                    f"{unattenuated_key!r} was not found in {h5_path}. "
+                    "Edit preprocess or unattenuated_key."
                 )
-            unattenuated_image = f[args.unattenuated_key][args.image_index].astype(np.float32)
+            unattenuated_image = f[unattenuated_key][image_index].astype(np.float32)
         label = None
-        if args.label_key in f:
-            label = f[args.label_key][args.image_index, args.site_index]
+        if label_key in f:
+            label = f[label_key][image_index, site_index]
 
     image, image_title, preprocess_info = preprocess_image_for_display(
         raw_image,
-        args.preprocess,
+        preprocess,
         all_images=all_images,
         unattenuated_image=unattenuated_image,
     )
@@ -236,46 +217,46 @@ def main():
     sites_t = torch.from_numpy(sites)
     Batch, H, W = image_t.shape
 
-    if not 0 <= args.site_index < sites.shape[0]:
+    if not 0 <= site_index < sites.shape[0]:
         raise IndexError(f"--site-index must be in [0, {sites.shape[0] - 1}]")
 
     offsets, dx, dy, sample_x, sample_y, grid_x, grid_y = build_sample_points(
-        sites_t, args.s, H, W, image_t.device
+        sites_t, s, H, W, image_t.device
     )
 
-    site_x, site_y = sites[args.site_index]
-    patch = extract_patches(image_t, sites_t, args.s)[0, args.site_index].reshape(args.s, args.s)
+    site_x, site_y = sites[site_index]
+    patch = extract_patches(image_t, sites_t, s)[0, site_index].reshape(s, s)
     square_patch, rounded_x, rounded_y, cut_x, cut_y, square_x0, square_y0 = extract_square_window_patch(
-        image, site_x, site_y, args.s
+        image, site_x, site_y, s
     )
 
-    sx = sample_x[args.site_index].cpu().numpy()
-    sy = sample_y[args.site_index].cpu().numpy()
+    sx = sample_x[site_index].cpu().numpy()
+    sy = sample_y[site_index].cpu().numpy()
     patch_np = patch.cpu().numpy()
-    zoom = args.zoom if args.zoom is not None else max(args.s * 2.0, 8.0)
+    zoom_amount = zoom if zoom is not None else max(s * 2.0, 8.0)
     image_vmin = float(np.min(image))
     image_vmax = float(np.max(image))
     if image_vmin == image_vmax:
         image_vmax = image_vmin + 1.0
-    patch_vmin = image_vmin if args.patch_scale == "image" else None
-    patch_vmax = image_vmax if args.patch_scale == "image" else None
+    patch_vmin = image_vmin if patch_scale == "image" else None
+    patch_vmax = image_vmax if patch_scale == "image" else None
 
     print(f"H5: {h5_path}")
     print(f"image shape: {image.shape}")
-    print(f"preprocess: {args.preprocess} ({image_title})")
+    print(f"preprocess: {preprocess} ({image_title})")
     for key, value in preprocess_info.items():
         print(f"preprocess {key}: {value}")
     print(f"display color scale: vmin={image_vmin}, vmax={image_vmax}")
-    print(f"patch color scale: {args.patch_scale}")
-    print(f"site {args.site_index}: x={site_x:.3f}, y={site_y:.3f}, label={label}")
-    print(f"s: {args.s}")
+    print(f"patch color scale: {patch_scale}")
+    print(f"site {site_index}: x={site_x:.3f}, y={site_y:.3f}, label={label}")
+    print(f"s: {s}")
     print("offsets:", offsets.cpu().numpy())
     print("sample_x:")
     print(sx)
     print("sample_y:")
     print(sy)
-    print("normalized grid_x range:", float(grid_x[args.site_index].min()), float(grid_x[args.site_index].max()))
-    print("normalized grid_y range:", float(grid_y[args.site_index].min()), float(grid_y[args.site_index].max()))
+    print("normalized grid_x range:", float(grid_x[site_index].min()), float(grid_x[site_index].max()))
+    print("normalized grid_y range:", float(grid_y[site_index].min()), float(grid_y[site_index].max()))
     print("bilinear extract_patches values:")
     print(patch_np)
     print(f"square window rounded site: x={rounded_x}, y={rounded_y}")
@@ -289,22 +270,22 @@ def main():
     fig, axes = plt.subplots(2, 3, figsize=(15, 9))
     ax_full, ax_zoom, ax_offsets, ax_bilinear_patch, ax_square_pixels, ax_square_patch = axes.ravel()
 
-    ax_full.imshow(image, cmap=args.cmap, origin="upper", vmin=image_vmin, vmax=image_vmax)
+    ax_full.imshow(image, cmap=cmap, origin="upper", vmin=image_vmin, vmax=image_vmax)
     ax_full.scatter(sites[:, 0], sites[:, 1], s=14, c="white", marker="x")
     draw_bilinear_geometry(ax_full, sx, sy, site_x, site_y)
-    draw_square_window_geometry(ax_full, cut_x, cut_y, rounded_x, rounded_y, square_x0, square_y0, args.s)
+    draw_square_window_geometry(ax_full, cut_x, cut_y, rounded_x, rounded_y, square_x0, square_y0, s)
     ax_full.set_title(f"full {image_title}: yellow=bilinear, cyan=integer square")
     ax_full.set_xlim(-0.5, W - 0.5)
     ax_full.set_ylim(H - 0.5, -0.5)
 
-    ax_zoom.imshow(image, cmap=args.cmap, origin="upper", vmin=image_vmin, vmax=image_vmax)
+    ax_zoom.imshow(image, cmap=cmap, origin="upper", vmin=image_vmin, vmax=image_vmax)
     draw_bilinear_geometry(ax_zoom, sx, sy, site_x, site_y)
-    draw_square_window_geometry(ax_zoom, cut_x, cut_y, rounded_x, rounded_y, square_x0, square_y0, args.s)
+    draw_square_window_geometry(ax_zoom, cut_x, cut_y, rounded_x, rounded_y, square_x0, square_y0, s)
     ax_zoom.set_title("zoom: yellow sampled, cyan cut pixels")
-    ax_zoom.set_xlim(site_x - zoom, site_x + zoom)
-    ax_zoom.set_ylim(site_y + zoom, site_y - zoom)
+    ax_zoom.set_xlim(site_x - zoom_amount, site_x + zoom_amount)
+    ax_zoom.set_ylim(site_y + zoom_amount, site_y - zoom_amount)
 
-    ax_offsets.scatter(dx.cpu().numpy().ravel(), dy.cpu().numpy().ravel(), s=50, c=np.arange(args.s * args.s))
+    ax_offsets.scatter(dx.cpu().numpy().ravel(), dy.cpu().numpy().ravel(), s=50, c=np.arange(s * s))
     ax_offsets.scatter([0], [0], s=90, c="red", marker="+")
     ax_offsets.set_title("bilinear offsets before adding site")
     ax_offsets.set_xlabel("dx")
@@ -314,7 +295,7 @@ def main():
 
     im_bilinear = ax_bilinear_patch.imshow(
         patch_np,
-        cmap=args.cmap,
+        cmap=cmap,
         origin="upper",
         vmin=patch_vmin,
         vmax=patch_vmax,
@@ -323,13 +304,13 @@ def main():
     ax_bilinear_patch.set_title("extract_patches: bilinear values")
     fig.colorbar(im_bilinear, ax=ax_bilinear_patch, fraction=0.046, pad=0.04)
 
-    ax_square_pixels.scatter(cut_x.ravel(), cut_y.ravel(), s=50, c=np.arange(args.s * args.s))
+    ax_square_pixels.scatter(cut_x.ravel(), cut_y.ravel(), s=50, c=np.arange(s * s))
     ax_square_pixels.scatter([rounded_x], [rounded_y], s=90, c="magenta", marker="+")
     ax_square_pixels.add_patch(
         Rectangle(
             (square_x0 - 0.5, square_y0 - 0.5),
-            args.s,
-            args.s,
+            s,
+            s,
             fill=False,
             edgecolor="cyan",
             linewidth=1.6,
@@ -344,7 +325,7 @@ def main():
 
     im_square = ax_square_patch.imshow(
         square_patch,
-        cmap=args.cmap,
+        cmap=cmap,
         origin="upper",
         vmin=patch_vmin,
         vmax=patch_vmax,
@@ -358,14 +339,14 @@ def main():
 
     label_text = "" if label is None else f", label={label}"
     fig.suptitle(
-        f"{image_title}: image {args.image_index}, site {args.site_index}, "
-        f"s={args.s}{label_text}"
+        f"{image_title}: image {image_index}, site {site_index}, "
+        f"s={s}{label_text}"
     )
     fig.tight_layout()
 
-    if args.save is not None:
-        fig.savefig(args.save, dpi=200)
-        print(f"saved: {args.save}")
+    if save is not None:
+        fig.savefig(save, dpi=200)
+        print(f"saved: {save}")
 
     plt.show()
 

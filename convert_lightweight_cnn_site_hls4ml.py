@@ -1,6 +1,8 @@
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
+import csv
 import os
 from pathlib import Path
+import re
 import shutil
 
 import joblib
@@ -11,14 +13,19 @@ from cnn_site import make_site_loader
 from lightweight_cnn_site import LightweightCnnSiteNet
 
 
-model_path = Path("models_3x3/qubit_dataset_sim_0.043_lightweight_cnn_site.joblib")
-hls_output_dir = Path("lightweight_cnn_site_43ms").resolve()
+data_dir = Path("dataset_3x3")
+model_dir = Path("models_3x3")
+hls_base_output_dir = Path("hls_models")
+hls_base_output_dir.mkdir(parents=True, exist_ok=True)
+model_path = None
+hls_output_dir = None
+current_dataset_path = None
 project_name = "lightweight_cnn_site"
 
 backend = "Vitis"
 io_type = "io_parallel"
 channels_last_conversion = "full"
-default_precision = "ap_fixed<32,16>"
+default_precision = "ap_fixed<8,6>"
 reuse_factor = 72
 strategy = "Resource"
 target_part = "xc7z020clg400-1"
@@ -36,7 +43,9 @@ conv_resource_reuse_limits = {
     "features_6": 3 * 3 * 16,
 }
 
-n_validation_crops = 128
+n_validation_crops = None
+validation_batch_size = 2048
+n_random_validation_crops = 128
 n_testbench_crops = 5
 validation_h5_path = None
 validation_indices = None
@@ -49,6 +58,85 @@ run_synthesis = False
 write_vitis_config = True
 write_testbench_data_enabled = True
 clean_output_dir = True
+selected_exposures_ms = None
+stop_after_first_failure = False
+quiet_hls4ml_output = True
+verbose_steps = False
+write_summary_csv = True
+summary_csv_name = "lightweight_cnn_site_hls4ml_summary.csv"
+good_class_disagreement_percent = 1.0
+good_accuracy_gap_pp = 1.0
+
+dataset_re = re.compile(r"qubit_dataset_sim_([0-9]+(?:\.[0-9]+)?)\.h5$")
+
+
+def parse_dataset_exposure(path):
+    match = dataset_re.fullmatch(Path(path).name)
+    if match is None:
+        return None
+    return float(match.group(1))
+
+
+def seconds_token(exposure_s):
+    return f"{float(exposure_s):g}"
+
+
+def exposure_ms_token(exposure_s):
+    value = float(exposure_s) * 1000.0
+    if value.is_integer():
+        return str(int(value))
+    return f"{value:g}".replace(".", "p")
+
+
+def model_path_for_exposure(exposure_s):
+    return model_dir / f"qubit_dataset_sim_{seconds_token(exposure_s)}_lightweight_cnn_site.joblib"
+
+
+def output_dir_for_exposure(exposure_s):
+    return (hls_base_output_dir / f"lightweight_cnn_site_{exposure_ms_token(exposure_s)}ms").resolve()
+
+
+def project_name_for_exposure(exposure_s):
+    return f"lightweight_cnn_site_{exposure_ms_token(exposure_s)}ms"
+
+
+def exposure_selected(exposure_s):
+    if selected_exposures_ms is None:
+        return True
+    exposure_ms = exposure_s * 1000.0
+    return any(np.isclose(exposure_ms, selected) for selected in selected_exposures_ms)
+
+
+def collect_dataset_exposures():
+    exposures = []
+    for path in sorted(data_dir.glob("qubit_dataset_sim_*.h5")):
+        exposure_s = parse_dataset_exposure(path)
+        if exposure_s is None or not exposure_selected(exposure_s):
+            continue
+        exposures.append((exposure_s, path))
+    return sorted(exposures, key=lambda item: item[0])
+
+
+def collect_conversion_jobs():
+    jobs = []
+    missing_models = []
+
+    for exposure_s, dataset_path in collect_dataset_exposures():
+        path = model_path_for_exposure(exposure_s)
+        if not path.exists():
+            missing_models.append((exposure_s, dataset_path, path))
+            continue
+        jobs.append(
+            {
+                "exposure_s": exposure_s,
+                "dataset_path": dataset_path,
+                "model_path": path,
+                "hls_output_dir": output_dir_for_exposure(exposure_s),
+                "project_name": project_name_for_exposure(exposure_s),
+            }
+        )
+
+    return jobs, missing_models
 
 
 @contextmanager
@@ -59,6 +147,22 @@ def working_directory(path):
         yield
     finally:
         os.chdir(old_cwd)
+
+
+@contextmanager
+def maybe_suppress_output(enabled):
+    if not enabled:
+        yield
+        return
+
+    with Path(os.devnull).open("w", encoding="utf-8") as devnull:
+        with redirect_stdout(devnull), redirect_stderr(devnull):
+            yield
+
+
+def print_step(message):
+    if verbose_steps:
+        print(message)
 
 
 def import_hls4ml():
@@ -83,7 +187,7 @@ def count_parameters(model):
 def load_checkpoint(path):
     path = Path(path)
     if not path.exists():
-        candidates = sorted(Path("models_3x3").glob("*_lightweight_cnn_site.joblib"))
+        candidates = sorted(model_dir.glob("*_lightweight_cnn_site.joblib"))
         candidate_text = "\n".join(f"  {candidate}" for candidate in candidates[:20])
         if len(candidates) > 20:
             candidate_text += f"\n  ... {len(candidates) - 20} more"
@@ -120,6 +224,10 @@ def checkpoint_h5_path(checkpoint):
     if validation_h5_path is not None:
         return Path(validation_h5_path)
     h5_path = checkpoint.get("h5_path")
+    if h5_path is not None and Path(h5_path).exists():
+        return Path(h5_path)
+    if current_dataset_path is not None:
+        return Path(current_dataset_path)
     if h5_path is None:
         return None
     return Path(h5_path)
@@ -153,7 +261,7 @@ def make_real_validation_crops(checkpoint, crop_size):
         crop_size=crop_size,
         mean_image=checkpoint.get("mean_image"),
         scale=checkpoint.get("scale"),
-        batch_size=n_validation_crops,
+        batch_size=validation_batch_size,
         num_workers=0,
         shuffle=False,
         pin_memory=False,
@@ -161,19 +269,24 @@ def make_real_validation_crops(checkpoint, crop_size):
 
     crop_batches = []
     label_batches = []
+    n_loaded_crops = 0
     for crops, labels in loader:
         crops = crops.reshape(-1, 1, crop_size, crop_size)
         labels = labels.reshape(-1)
         crop_batches.append(crops)
         label_batches.append(labels)
-        if sum(batch.shape[0] for batch in crop_batches) >= n_validation_crops:
+        n_loaded_crops += crops.shape[0]
+        if n_validation_crops is not None and n_loaded_crops >= n_validation_crops:
             break
 
     if not crop_batches:
         return None, None
 
-    crops = torch.cat(crop_batches, dim=0)[:n_validation_crops]
-    labels = torch.cat(label_batches, dim=0)[:n_validation_crops]
+    crops = torch.cat(crop_batches, dim=0)
+    labels = torch.cat(label_batches, dim=0)
+    if n_validation_crops is not None:
+        crops = crops[:n_validation_crops]
+        labels = labels[:n_validation_crops]
     return crops.numpy().astype(np.float32, copy=False), labels.numpy()
 
 
@@ -182,7 +295,7 @@ def make_random_validation_crops(crop_size):
     crops = rng.normal(
         loc=0.0,
         scale=0.25,
-        size=(n_validation_crops, 1, crop_size, crop_size),
+        size=(n_random_validation_crops, 1, crop_size, crop_size),
     ).astype(np.float32)
     return crops, None
 
@@ -249,29 +362,25 @@ def compare_outputs(torch_logits, hls_logits, labels=None):
     torch_classes = torch_probabilities.argmax(axis=1)
     hls_classes = hls_probabilities.argmax(axis=1)
 
-    print("Validation comparison:")
-    print(f"  compared crops:        {n_outputs}")
-    print(f"  max |logit diff|:      {np.max(np.abs(torch_logits - hls_logits)):.6g}")
-    print(f"  mean |logit diff|:     {np.mean(np.abs(torch_logits - hls_logits)):.6g}")
-    print(
-        "  max |prob diff|:       "
-        f"{np.max(np.abs(torch_probabilities - hls_probabilities)):.6g}"
-    )
-    print(
-        "  class disagreement:    "
-        f"{np.mean(torch_classes != hls_classes) * 100.0:.3f}%"
-    )
+    metrics = {
+        "compared_crops": int(n_outputs),
+        "max_logit_diff": float(np.max(np.abs(torch_logits - hls_logits))),
+        "mean_logit_diff": float(np.mean(np.abs(torch_logits - hls_logits))),
+        "max_prob_diff": float(np.max(np.abs(torch_probabilities - hls_probabilities))),
+        "class_disagreement_percent": float(
+            np.mean(torch_classes != hls_classes) * 100.0
+        ),
+    }
 
     if labels is not None:
         labels = labels[:n_outputs]
-        print(
-            "  PyTorch accuracy:      "
-            f"{np.mean(torch_classes == labels) * 100.0:.3f}%"
+        metrics["torch_accuracy_percent"] = float(np.mean(torch_classes == labels) * 100.0)
+        metrics["hls_accuracy_percent"] = float(np.mean(hls_classes == labels) * 100.0)
+        metrics["accuracy_gap_pp"] = (
+            metrics["hls_accuracy_percent"] - metrics["torch_accuracy_percent"]
         )
-        print(
-            "  hls4ml accuracy:       "
-            f"{np.mean(hls_classes == labels) * 100.0:.3f}%"
-        )
+
+    return metrics
 
 
 def make_hls_config(hls4ml, model, crop_size):
@@ -334,11 +443,11 @@ def mirror_runtime_weights():
     source = hls_output_dir / "firmware" / "weights"
     destination = hls_output_dir / "weights"
     if not source.exists():
-        print(f"Runtime weights not found, skipping mirror: {source}")
+        print_step(f"Runtime weights not found, skipping mirror: {source}")
         return
 
     shutil.copytree(source, destination, dirs_exist_ok=True)
-    print(f"Mirrored runtime weights: {destination}")
+    print_step(f"Mirrored runtime weights: {destination}")
 
 
 def write_vitis_hls_config():
@@ -364,7 +473,7 @@ clock={clock_period_ns}ns
 csim.code_analyzer=1
 """
     config_path.write_text(config_text, encoding="utf-8")
-    print(f"Wrote Vitis HLS config: {config_path}")
+    print_step(f"Wrote Vitis HLS config: {config_path}")
 
 
 def write_matrix(path, values):
@@ -392,70 +501,301 @@ def write_testbench_data(checkpoint, model, crop_size):
     write_matrix(input_path, crops.reshape(crops.shape[0], -1))
     write_matrix(prediction_path, predictions.reshape(predictions.shape[0], -1))
 
-    print(f"Wrote testbench inputs: {input_path}")
-    print(f"Wrote testbench predictions: {prediction_path}")
-    print(f"  testbench crops:      {crops.shape[0]} from {validation_source}")
+    print_step(f"Wrote testbench inputs: {input_path}")
+    print_step(f"Wrote testbench predictions: {prediction_path}")
+    print_step(f"  testbench crops:      {crops.shape[0]} from {validation_source}")
 
 
 def maybe_run_synthesis(hls_model):
     if not run_synthesis:
         return
-    print("Running HLS synthesis. This can take a long time.")
-    hls_model.build(csim=True, synth=True, vsynth=False)
+    print_step("Running HLS synthesis. This can take a long time.")
+    with maybe_suppress_output(quiet_hls4ml_output):
+        hls_model.build(csim=True, synth=True, vsynth=False)
 
 
-def main():
-    hls4ml = import_hls4ml()
+def result_quality(result):
+    if result.get("status") != "ok":
+        return "fail"
+    if not run_hls_predict:
+        return "ok"
 
+    disagreement = abs(float(result.get("class_disagreement_percent", 0.0)))
+    accuracy_gap = abs(float(result.get("accuracy_gap_pp", 0.0)))
+    if (
+        disagreement <= good_class_disagreement_percent
+        and accuracy_gap <= good_accuracy_gap_pp
+    ):
+        return "good"
+    return "check"
+
+
+def print_job_result(result):
+    exposure_ms = result["exposure_ms"]
+    quality = result_quality(result)
+
+    if result.get("status") != "ok":
+        print(
+            f"  {exposure_ms:6g} ms  fail   "
+            f"{result['error_type']}: {result['error']}"
+        )
+        return
+
+    if not run_hls_predict:
+        print(f"  {exposure_ms:6g} ms  ok     project written")
+        return
+
+    print(
+        f"  {exposure_ms:6g} ms  {quality:5s}  "
+        f"torch={result.get('torch_accuracy_percent', float('nan')):7.3f}%  "
+        f"hls={result.get('hls_accuracy_percent', float('nan')):7.3f}%  "
+        f"gap={result.get('accuracy_gap_pp', float('nan')):+7.3f} pp  "
+        f"disagree={result['class_disagreement_percent']:6.3f}%"
+    )
+
+
+def print_summary(results, missing_models):
+    print("\nSummary:")
+    print("  ms       status  torch acc  hls acc    gap pp  disagree  mean logit  max prob")
+    for result in results:
+        exposure_ms = result["exposure_ms"]
+        quality = result_quality(result)
+
+        if result.get("status") != "ok":
+            print(f"  {exposure_ms:6g}  fail    {result['error_type']}: {result['error']}")
+            continue
+
+        if not run_hls_predict:
+            print(f"  {exposure_ms:6g}  ok      project written")
+            continue
+
+        print(
+            f"  {exposure_ms:6g}  {quality:5s}  "
+            f"{result.get('torch_accuracy_percent', float('nan')):8.3f}%  "
+            f"{result.get('hls_accuracy_percent', float('nan')):7.3f}%  "
+            f"{result.get('accuracy_gap_pp', float('nan')):+7.3f}  "
+            f"{result['class_disagreement_percent']:8.3f}%  "
+            f"{result['mean_logit_diff']:10.4g}  "
+            f"{result['max_prob_diff']:8.4g}"
+        )
+
+    checks = [
+        result for result in results
+        if result_quality(result) == "check"
+    ]
+    failures = [
+        result for result in results
+        if result_quality(result) == "fail"
+    ]
+
+    print("\nResult counts:")
+    print(f"  good conversions:     {sum(result_quality(result) == 'good' for result in results)}")
+    print(f"  check conversions:    {len(checks)}")
+    print(f"  failed conversions:   {len(failures)}")
+    print(f"  missing models:       {len(missing_models)}")
+
+    if checks:
+        check_text = ", ".join(f"{result['exposure_ms']:g} ms" for result in checks)
+        print(f"  needs checking:       {check_text}")
+
+    summary_path = write_summary_csv_file(results, missing_models)
+    if summary_path is not None:
+        print(f"  summary csv:          {summary_path}")
+
+
+def write_summary_csv_file(results, missing_models):
+    if not write_summary_csv:
+        return None
+
+    summary_path = (hls_base_output_dir / summary_csv_name).resolve()
+    fieldnames = [
+        "exposure_ms",
+        "status",
+        "quality",
+        "torch_accuracy_percent",
+        "hls_accuracy_percent",
+        "accuracy_gap_pp",
+        "class_disagreement_percent",
+        "mean_logit_diff",
+        "max_logit_diff",
+        "max_prob_diff",
+        "compared_crops",
+        "model_path",
+        "dataset_path",
+        "output_dir",
+        "error",
+    ]
+
+    rows = []
+    for result in results:
+        rows.append(
+            {
+                "exposure_ms": result["exposure_ms"],
+                "status": result.get("status", ""),
+                "quality": result_quality(result),
+                "torch_accuracy_percent": result.get("torch_accuracy_percent", ""),
+                "hls_accuracy_percent": result.get("hls_accuracy_percent", ""),
+                "accuracy_gap_pp": result.get("accuracy_gap_pp", ""),
+                "class_disagreement_percent": result.get(
+                    "class_disagreement_percent", ""
+                ),
+                "mean_logit_diff": result.get("mean_logit_diff", ""),
+                "max_logit_diff": result.get("max_logit_diff", ""),
+                "max_prob_diff": result.get("max_prob_diff", ""),
+                "compared_crops": result.get("compared_crops", ""),
+                "model_path": result.get("model_path", ""),
+                "dataset_path": result.get("dataset_path", ""),
+                "output_dir": result.get("output_dir", ""),
+                "error": result.get("error", ""),
+            }
+        )
+
+    for exposure_s, dataset_path, path in missing_models:
+        rows.append(
+            {
+                "exposure_ms": exposure_s * 1000.0,
+                "status": "missing_model",
+                "quality": "missing",
+                "torch_accuracy_percent": "",
+                "hls_accuracy_percent": "",
+                "accuracy_gap_pp": "",
+                "class_disagreement_percent": "",
+                "mean_logit_diff": "",
+                "max_logit_diff": "",
+                "max_prob_diff": "",
+                "compared_crops": "",
+                "model_path": path,
+                "dataset_path": dataset_path,
+                "output_dir": "",
+                "error": "matching lightweight checkpoint not found",
+            }
+        )
+
+    with summary_path.open("w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    return summary_path
+
+
+def run_one_conversion(hls4ml, job):
+    global model_path
+    global hls_output_dir
+    global current_dataset_path
+    global project_name
+
+    exposure_s = float(job["exposure_s"])
+    exposure_ms = exposure_s * 1000.0
+    current_dataset_path = Path(job["dataset_path"])
+    model_path = Path(job["model_path"])
+    hls_output_dir = Path(job["hls_output_dir"])
+    project_name = str(job["project_name"])
     checkpoint = load_checkpoint(model_path)
     model = load_float_model(checkpoint)
     crop_size = int(checkpoint.get("crop_size", 10))
-
-    print("Lightweight CNN-site hls4ml conversion")
-    print(f"  checkpoint:           {model_path}")
-    print(f"  architecture:         {checkpoint.get('architecture', 'tiny_cnn_site_3conv_pool_8fc')}")
-    print(f"  crop size:            {crop_size}x{crop_size}")
-    print(f"  parameters:           {count_parameters(model):,}")
-    print(f"  backend:              {backend}")
-    print(f"  target part:          {target_part or 'hls4ml default'}")
-    print(f"  clock period:         {clock_period_ns} ns")
-    print(f"  io_type:              {io_type}")
-    print(f"  channels conversion:  {channels_last_conversion}")
-    print(f"  precision:            {default_precision}")
-    print(f"  reuse factor:         {reuse_factor}")
-    print(f"  layer reuse factors:  {layer_reuse_factors}")
-    print(f"  output dir:           {hls_output_dir}")
+    result = {
+        "status": "ok",
+        "exposure_ms": exposure_ms,
+        "dataset_path": current_dataset_path,
+        "model_path": model_path,
+        "output_dir": hls_output_dir,
+        "project_name": project_name,
+        "parameters": count_parameters(model),
+    }
 
     validate_hls_config()
 
     if clean_output_dir and hls_output_dir.exists():
-        print(f"Cleaning existing hls4ml output dir: {hls_output_dir}")
+        print_step(f"Cleaning existing hls4ml output dir: {hls_output_dir}")
         shutil.rmtree(hls_output_dir)
 
     config = make_hls_config(hls4ml, model, crop_size)
-    hls_model = convert_model(hls4ml, model, config, crop_size)
+    with maybe_suppress_output(quiet_hls4ml_output):
+        hls_model = convert_model(hls4ml, model, config, crop_size)
 
     if write_project:
-        print("Writing hls4ml project.")
-        hls_model.write()
+        print_step("Writing hls4ml project.")
+        with maybe_suppress_output(quiet_hls4ml_output):
+            hls_model.write()
         mirror_runtime_weights()
         write_testbench_data(checkpoint, model, crop_size)
         write_vitis_hls_config()
 
     if run_hls_compile:
-        print("Compiling hls4ml C simulation library.")
-        hls_model.compile()
+        print_step("Compiling hls4ml C simulation library.")
+        with maybe_suppress_output(quiet_hls4ml_output):
+            hls_model.compile()
 
     if run_hls_predict:
         crops, labels, validation_source = make_validation_crops(checkpoint, crop_size)
-        print(f"Validation input:       {validation_source}")
         torch_logits = torch_predict(model, crops)
-        hls_logits = hls_predict(hls_model, crops)
-        compare_outputs(torch_logits, hls_logits, labels=labels)
+        with maybe_suppress_output(quiet_hls4ml_output):
+            hls_logits = hls_predict(hls_model, crops)
+        result["validation_source"] = validation_source
+        result.update(compare_outputs(torch_logits, hls_logits, labels=labels))
 
     maybe_run_synthesis(hls_model)
 
-    print("Done.")
+    return result
+
+
+def main():
+    jobs, missing_models = collect_conversion_jobs()
+
+    print("Lightweight CNN-site batch hls4ml conversion")
+    print(f"  dataset dir:          {data_dir}")
+    print(f"  model dir:            {model_dir}")
+    print(f"  hls output base:      {hls_base_output_dir.resolve()}")
+    print(f"  datasets found:       {len(collect_dataset_exposures())}")
+    print(f"  conversion jobs:      {len(jobs)}")
+    print(f"  missing models:       {len(missing_models)}")
+
+    if missing_models:
+        missing_text = ", ".join(
+            f"{exposure_s * 1000.0:g} ms"
+            for exposure_s, _, _ in missing_models
+        )
+        print(f"  skipped missing:      {missing_text}")
+
+    if not jobs:
+        raise FileNotFoundError(
+            "No conversion jobs found. Check data_dir/model_dir and trained lightweight CNN-site models."
+        )
+
+    validate_hls_config()
+    hls4ml = import_hls4ml()
+    results = []
+
+    print("\nRunning conversions:")
+    for job_index, job in enumerate(jobs, start=1):
+        exposure_ms = float(job["exposure_s"]) * 1000.0
+        print(f"  [{job_index:2d}/{len(jobs):2d}] ", end="", flush=True)
+        try:
+            result = run_one_conversion(hls4ml, job)
+        except Exception as exc:
+            result = {
+                "status": "fail",
+                "exposure_ms": exposure_ms,
+                "dataset_path": job["dataset_path"],
+                "model_path": job["model_path"],
+                "output_dir": job["hls_output_dir"],
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            }
+            if stop_after_first_failure:
+                raise
+
+        results.append(result)
+        print_job_result(result)
+
+    print_summary(results, missing_models)
+
+    failures = [result for result in results if result.get("status") != "ok"]
+    if failures:
+        raise RuntimeError(f"{len(failures)} hls4ml conversion job(s) failed")
+
+    print("\nAll conversion jobs completed.")
 
 
 if __name__ == "__main__":

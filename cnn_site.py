@@ -12,19 +12,20 @@ from mf_site import classification_fidelity
 from utils import H5Dataset, extract_patches, get_device
 
 
-DEFAULT_DATA_DIR = Path(
+default_data_dir = Path(
     "dataset_3x3"
 )
-DEFAULT_MODEL_DIR = Path("models_3x3")
-CNN_SITE_DECISION_THRESHOLD = 0.5
-CROP_SIZE = 10
-LEARNING_RATE = 1e-4
-EPOCHS = 40
-BATCH_SIZE = 64
-EVAL_BATCH_SIZE = 2048
-NUM_WORKERS = 2
-BASE_SEED = 42
-DEVICE = "cuda"
+default_model_dir = Path("models_3x3")
+cnn_site_decision_threshold = 0.5
+crop_size = 10
+learning_rate = 1e-4
+epochs = 40
+batch_size = 64
+eval_batch_size = 2048
+num_workers = 2
+base_seed = 42
+device = "cuda"
+site_crop_cache_version = 1
 
 
 def make_random_split(
@@ -117,6 +118,191 @@ def extract_site_crop(image, site, crop_size):
     return crop.astype(np.float32, copy=False)
 
 
+def extract_site_crops(image, sites, crop_size):
+    height, width = image.shape
+    half = crop_size // 2
+    pad = half + 1
+
+    padded = np.pad(
+        image,
+        pad_width=((pad, pad), (pad, pad)),
+        mode="constant",
+        constant_values=0.0,
+    )
+
+    sites = np.asarray(sites, dtype=np.float32)
+    centers_x = np.rint(sites[:, 0]).astype(np.int64) + pad
+    centers_y = np.rint(sites[:, 1]).astype(np.int64) + pad
+
+    crops = np.empty((sites.shape[0], crop_size, crop_size), dtype=np.float32)
+    for site_index, (center_x, center_y) in enumerate(zip(centers_x, centers_y)):
+        x0 = int(center_x) - half
+        y0 = int(center_y) - half
+        crop = padded[y0:y0 + crop_size, x0:x0 + crop_size]
+
+        if crop.shape != (crop_size, crop_size):
+            raise ValueError(
+                f"expected crop shape {(crop_size, crop_size)}, got {crop.shape} "
+                f"from image shape {(height, width)}"
+            )
+
+        crops[site_index] = crop
+
+    return crops
+
+
+def _source_file_signature(h5_path):
+    h5_path = Path(h5_path)
+    stat = h5_path.stat()
+    return {
+        "source_h5_path": str(h5_path.resolve()),
+        "source_h5_size": int(stat.st_size),
+        "source_h5_mtime_ns": int(stat.st_mtime_ns),
+    }
+
+
+def _site_crop_cache_matches(
+    cache_path,
+    h5_path,
+    crop_size,
+    image_key="images",
+    label_key="labels",
+    site_key="sites",
+):
+    cache_path = Path(cache_path)
+    if not cache_path.exists():
+        return False
+
+    signature = _source_file_signature(h5_path)
+    try:
+        with h5py.File(h5_path, "r") as source, h5py.File(cache_path, "r") as cache:
+            if "crops" not in cache or "labels" not in cache or "sites" not in cache:
+                return False
+
+            expected_shape = (
+                source[image_key].shape[0],
+                source[site_key].shape[0],
+                int(crop_size),
+                int(crop_size),
+            )
+            if tuple(cache["crops"].shape) != expected_shape:
+                return False
+            if tuple(cache["labels"].shape) != tuple(source[label_key].shape):
+                return False
+            if tuple(cache["sites"].shape) != tuple(source[site_key].shape):
+                return False
+
+            attrs = cache.attrs
+            if int(attrs.get("cache_version", -1)) != site_crop_cache_version:
+                return False
+            if int(attrs.get("crop_size", -1)) != int(crop_size):
+                return False
+            for key, value in signature.items():
+                if attrs.get(key) != value:
+                    return False
+    except OSError:
+        return False
+
+    return True
+
+
+def build_site_crop_cache(
+    h5_path,
+    cache_path,
+    crop_size,
+    image_key="images",
+    label_key="labels",
+    site_key="sites",
+    batch_size=16,
+    overwrite=False,
+):
+    cache_path = Path(cache_path)
+    crop_size = int(crop_size)
+
+    if (
+        not overwrite
+        and _site_crop_cache_matches(
+            cache_path=cache_path,
+            h5_path=h5_path,
+            crop_size=crop_size,
+            image_key=image_key,
+            label_key=label_key,
+            site_key=site_key,
+        )
+    ):
+        print(f"Using site crop cache: {cache_path}")
+        return cache_path
+
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
+    tmp_path.unlink(missing_ok=True)
+
+    with h5py.File(h5_path, "r") as source:
+        images = source[image_key]
+        labels = source[label_key]
+        sites = source[site_key][:].astype(np.float32)
+
+        n_images = int(images.shape[0])
+        n_sites = int(sites.shape[0])
+        if labels.shape != (n_images, n_sites):
+            raise ValueError(
+                f"expected labels shape {(n_images, n_sites)}, got {labels.shape}"
+            )
+
+        crop_dtype = images.dtype if np.issubdtype(images.dtype, np.integer) else np.float32
+
+        with h5py.File(tmp_path, "w") as cache:
+            crop_dataset = cache.create_dataset(
+                "crops",
+                shape=(n_images, n_sites, crop_size, crop_size),
+                dtype=crop_dtype,
+                chunks=(1, n_sites, crop_size, crop_size),
+            )
+            label_dataset = cache.create_dataset(
+                "labels",
+                shape=labels.shape,
+                dtype=labels.dtype,
+                chunks=(1, n_sites),
+            )
+            cache.create_dataset("sites", data=sites, dtype=np.float32)
+
+            cache.attrs["cache_version"] = site_crop_cache_version
+            cache.attrs["crop_size"] = crop_size
+            cache.attrs["image_key"] = image_key
+            cache.attrs["label_key"] = label_key
+            cache.attrs["site_key"] = site_key
+            cache.attrs["preprocessing"] = "raw_site_crops_before_global_mean_range_normalization"
+            for key, value in _source_file_signature(h5_path).items():
+                cache.attrs[key] = value
+
+            progress = tqdm(
+                range(0, n_images, int(batch_size)),
+                desc=f"Building {crop_size}x{crop_size} site crop cache",
+                unit="batch",
+                leave=False,
+            )
+            for start in progress:
+                stop = min(start + int(batch_size), n_images)
+                image_batch = images[start:stop]
+                crop_batch = np.empty(
+                    (stop - start, n_sites, crop_size, crop_size),
+                    dtype=crop_dtype,
+                )
+                for local_index, image in enumerate(image_batch):
+                    crop_batch[local_index] = extract_site_crops(
+                        image=image.astype(np.float32, copy=False),
+                        sites=sites,
+                        crop_size=crop_size,
+                    ).astype(crop_dtype, copy=False)
+
+                crop_dataset[start:stop] = crop_batch
+                label_dataset[start:stop] = labels[start:stop]
+
+    tmp_path.replace(cache_path)
+    print(f"Saved site crop cache: {cache_path}")
+    return cache_path
+
+
 class CnnSiteDataset(Dataset):
     """
     Reads one full-array image and returns all single-site crops.
@@ -176,16 +362,10 @@ class CnnSiteDataset(Dataset):
         if self.scale is not None:
             image = image / self.scale
 
-        crops = np.stack(
-            [
-                extract_site_crop(
-                    image=image,
-                    site=site,
-                    crop_size=self.crop_size,
-                )
-                for site in self.sites
-            ],
-            axis=0,
+        crops = extract_site_crops(
+            image=image,
+            sites=self.sites,
+            crop_size=self.crop_size,
         )
         labels = (f[self.label_key][file_index] > 0.5).astype(np.int64)
 
@@ -193,6 +373,111 @@ class CnnSiteDataset(Dataset):
             torch.from_numpy(crops[:, None, :, :]).float(),
             torch.from_numpy(labels).long(),
         )
+
+    def __getitems__(self, indices):
+        file_indices = np.asarray([self.indices[int(idx)] for idx in indices], dtype=np.int64)
+        unique_file_indices, inverse = np.unique(file_indices, return_inverse=True)
+
+        f = self._file()
+        images = f[self.image_key][unique_file_indices].astype(np.float32)[inverse]
+        labels = (f[self.label_key][unique_file_indices] > 0.5).astype(np.int64)[inverse]
+
+        if self.mean_image is not None:
+            images = images - self.mean_image
+        if self.scale is not None:
+            images = images / self.scale
+
+        return [
+            (
+                torch.from_numpy(
+                    extract_site_crops(
+                        image=image,
+                        sites=self.sites,
+                        crop_size=self.crop_size,
+                    )[:, None, :, :]
+                ).float(),
+                torch.from_numpy(label).long(),
+            )
+            for image, label in zip(images, labels)
+        ]
+
+
+class CachedCnnSiteDataset(Dataset):
+    def __init__(
+        self,
+        cache_path,
+        indices,
+        crop_size,
+        mean_image=None,
+        scale=None,
+    ):
+        self.cache_path = cache_path
+        self.indices = list(indices)
+        self.crop_size = int(crop_size)
+        self.mean_image = None if mean_image is None else np.asarray(mean_image, dtype=np.float32)
+        self.scale = None if scale is None else float(scale)
+        self._h5 = None
+
+        if self.mean_image is not None and self.mean_image.ndim != 0:
+            raise ValueError("cached site crops only support scalar mean preprocessing")
+
+        with h5py.File(cache_path, "r") as f:
+            if int(f.attrs.get("crop_size", -1)) != self.crop_size:
+                raise ValueError(
+                    f"cache crop_size={f.attrs.get('crop_size')} does not match "
+                    f"requested crop_size={self.crop_size}"
+                )
+            self.n_images = int(f["crops"].shape[0])
+            self.n_sites = int(f["crops"].shape[1])
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_h5"] = None
+        return state
+
+    def _file(self):
+        if self._h5 is None:
+            self._h5 = h5py.File(self.cache_path, "r")
+        return self._h5
+
+    def _preprocess_crops(self, crops):
+        crops = crops.astype(np.float32, copy=False)
+        if self.mean_image is not None:
+            crops = crops - self.mean_image
+        if self.scale is not None:
+            crops = crops / self.scale
+        return crops
+
+    def __getitem__(self, idx):
+        file_index = int(self.indices[idx])
+
+        f = self._file()
+        crops = self._preprocess_crops(f["crops"][file_index])
+        labels = (f["labels"][file_index] > 0.5).astype(np.int64)
+
+        return (
+            torch.from_numpy(crops[:, None, :, :]).float(),
+            torch.from_numpy(labels).long(),
+        )
+
+    def __getitems__(self, indices):
+        file_indices = np.asarray([self.indices[int(idx)] for idx in indices], dtype=np.int64)
+        unique_file_indices, inverse = np.unique(file_indices, return_inverse=True)
+
+        f = self._file()
+        crops = self._preprocess_crops(f["crops"][unique_file_indices])[inverse]
+        labels = (f["labels"][unique_file_indices] > 0.5).astype(np.int64)[inverse]
+
+        return [
+            (
+                torch.from_numpy(crop[:, None, :, :]).float(),
+                torch.from_numpy(label).long(),
+            )
+            for crop, label in zip(crops, labels)
+        ]
 
 
 class CnnSiteNet(nn.Module):
@@ -232,14 +517,24 @@ def make_site_loader(
     num_workers,
     shuffle,
     pin_memory=False,
+    crop_cache_path=None,
 ):
-    dataset = CnnSiteDataset(
-        h5_path=h5_path,
-        indices=indices,
-        crop_size=crop_size,
-        mean_image=mean_image,
-        scale=scale,
-    )
+    if crop_cache_path is None:
+        dataset = CnnSiteDataset(
+            h5_path=h5_path,
+            indices=indices,
+            crop_size=crop_size,
+            mean_image=mean_image,
+            scale=scale,
+        )
+    else:
+        dataset = CachedCnnSiteDataset(
+            cache_path=crop_cache_path,
+            indices=indices,
+            crop_size=crop_size,
+            mean_image=mean_image,
+            scale=scale,
+        )
     image_batch_size = max(1, batch_size // dataset.n_sites)
 
     return DataLoader(
@@ -351,6 +646,7 @@ def train_cnn_site(
     device="cpu",
     mean_image=None,
     scale=None,
+    crop_cache_path=None,
 ):
     train_loader = make_site_loader(
         h5_path=h5_path,
@@ -362,6 +658,7 @@ def train_cnn_site(
         num_workers=num_workers,
         shuffle=True,
         pin_memory=str(device).startswith("cuda"),
+        crop_cache_path=crop_cache_path,
     )
     val_loader = make_site_loader(
         h5_path=h5_path,
@@ -373,6 +670,7 @@ def train_cnn_site(
         num_workers=num_workers,
         shuffle=False,
         pin_memory=str(device).startswith("cuda"),
+        crop_cache_path=crop_cache_path,
     )
 
     n_sites = train_loader.dataset.n_sites
@@ -454,13 +752,13 @@ def train_cnn_site(
         device=device,
     )
 
-    thresholds = np.full(n_sites, CNN_SITE_DECISION_THRESHOLD, dtype=np.float32)
+    thresholds = np.full(n_sites, cnn_site_decision_threshold, dtype=np.float32)
     fidelities = np.zeros(n_sites, dtype=np.float32)
     for q in range(n_sites):
         fidelities[q] = classification_fidelity(
             val_scores[:, q],
             val_labels[:, q],
-            CNN_SITE_DECISION_THRESHOLD,
+            cnn_site_decision_threshold,
         )
 
     return {
@@ -476,11 +774,11 @@ def train_cnn_site(
         "learning_rate": float(learning_rate),
         "epochs": int(epochs),
         "batch_size": int(batch_size),
+        "crop_cache_path": None if crop_cache_path is None else str(crop_cache_path),
     }
 
 
-def evaluate_cnn_site_model(dataloader, best, device="cpu"):
-    scores, labels = calc_cnn_site_scores(dataloader, best, device=device)
+def evaluate_cnn_site_scores_labels(scores, labels, best):
     thresholds = np.asarray(best["threshold"])
 
     fids = np.zeros(labels.shape[1], dtype=np.float32)
@@ -505,6 +803,11 @@ def evaluate_cnn_site_model(dataloader, best, device="cpu"):
     }
 
 
+def evaluate_cnn_site_model(dataloader, best, device="cpu"):
+    scores, labels = calc_cnn_site_scores(dataloader, best, device=device)
+    return evaluate_cnn_site_scores_labels(scores, labels, best)
+
+
 def run_one_split(
     h5_path,
     split_seed,
@@ -515,6 +818,7 @@ def run_one_split(
     eval_batch_size,
     num_workers,
     device,
+    crop_cache_path=None,
 ):
     with h5py.File(h5_path, "r") as f:
         n_samples = f["images"].shape[0]
@@ -539,27 +843,48 @@ def run_one_split(
         device=device,
         mean_image=mean_image,
         scale=scale,
+        crop_cache_path=crop_cache_path,
     )
 
-    test_loader = DataLoader(
-        H5Dataset(
-            h5_path,
+    if crop_cache_path is None:
+        test_loader = DataLoader(
+            H5Dataset(
+                h5_path,
+                indices=test_idx,
+                mean_image=mean_image,
+                scale=scale,
+            ),
+            batch_size=eval_batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=str(device).startswith("cuda"),
+            persistent_workers=num_workers > 0,
+        )
+        test_metrics = evaluate_cnn_site_model(
+            test_loader,
+            trained,
+            device=device,
+        )
+    else:
+        test_loader = make_site_loader(
+            h5_path=h5_path,
             indices=test_idx,
+            crop_size=crop_size,
             mean_image=mean_image,
             scale=scale,
-        ),
-        batch_size=eval_batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=str(device).startswith("cuda"),
-        persistent_workers=num_workers > 0,
-    )
-
-    test_metrics = evaluate_cnn_site_model(
-        test_loader,
-        trained,
-        device=device,
-    )
+            batch_size=eval_batch_size,
+            num_workers=num_workers,
+            shuffle=False,
+            pin_memory=str(device).startswith("cuda"),
+            crop_cache_path=crop_cache_path,
+        )
+        model = load_cnn_site_model(trained, device=device)
+        scores, labels = calc_cnn_site_scores_from_site_loader(
+            dataloader=test_loader,
+            model=model,
+            device=device,
+        )
+        test_metrics = evaluate_cnn_site_scores_labels(scores, labels, trained)
 
     return {
         "seed": split_seed,
@@ -580,20 +905,21 @@ def run_one_split(
         ).copy(),
         "test_total_errors": int(test_metrics["total_errors"]),
         "trained_model": trained,
+        "crop_cache_path": None if crop_cache_path is None else str(crop_cache_path),
     }
 
 
 def main(
     data_dir,
     model_dir,
-    crop_size=CROP_SIZE,
-    learning_rate=LEARNING_RATE,
-    epochs=EPOCHS,
-    batch_size=BATCH_SIZE,
-    eval_batch_size=EVAL_BATCH_SIZE,
-    num_workers=NUM_WORKERS,
-    base_seed=BASE_SEED,
-    device=DEVICE,
+    crop_size=crop_size,
+    learning_rate=learning_rate,
+    epochs=epochs,
+    batch_size=batch_size,
+    eval_batch_size=eval_batch_size,
+    num_workers=num_workers,
+    base_seed=base_seed,
+    device=device,
 ):
     model_dir.mkdir(parents=True, exist_ok=True)
 
@@ -662,6 +988,6 @@ def main(
 
 if __name__ == "__main__":
     main(
-        data_dir=DEFAULT_DATA_DIR,
-        model_dir=DEFAULT_MODEL_DIR,
+        data_dir=default_data_dir,
+        model_dir=default_model_dir,
     )
