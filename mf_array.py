@@ -481,7 +481,7 @@ def main(data_dir, model_dir):
 if __name__ == "__main__":
     main(
         data_dir=Path("/Users/marone/PycharmProjects/neutral-atom-imaging-simulation-main/datasets_20x20"),
-        model_dir=Path("models_20x20"),
+        model_dir=Path("back-up/models_20x20"),
         # data_dir=Path("/Users/marone/PycharmProjects/neutral-atom-imaging-simulation-main/dataset_3x3"),
         # model_dir=Path("models_3x3"),
     )
