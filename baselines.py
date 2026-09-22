@@ -3,102 +3,20 @@ import torch
 import numpy as np
 import joblib
 from pathlib import Path
-from scipy.optimize import curve_fit
+from scipy.optimize import curve_fit, minimize_scalar
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 from mf_site import (
-    classification_fidelity
+    best_threshold_by_fidelity,
+    classification_fidelity,
 )
 
-from utils import H5Dataset, get_device, extract_patches
+from utils import H5Dataset, get_device, extract_patches, path_from_root
 
 # ---------------------------------------------------------------------
 # Threshold tuning
 # ---------------------------------------------------------------------
-
-def best_threshold_by_fidelity(scores, y):
-    scores = np.asarray(scores, dtype=np.float64).reshape(-1)
-    target = np.asarray(y).reshape(-1) > 0.5
-
-    finite = np.isfinite(scores)
-    scores = scores[finite]
-    target = target[finite]
-    if scores.size == 0:
-        raise ValueError("cannot choose a threshold from empty/non-finite scores")
-
-    unique_scores, inverse = np.unique(scores, return_inverse=True)
-    n_unique = unique_scores.size
-
-    dark = ~target
-    bright = target
-    n_dark = int(dark.sum())
-    n_bright = int(bright.sum())
-    total_dark = max(n_dark, 1)
-    total_bright = max(n_bright, 1)
-
-    dark_by_score = np.bincount(
-        inverse,
-        weights=dark.astype(np.float64),
-        minlength=n_unique,
-    )
-    bright_by_score = np.bincount(
-        inverse,
-        weights=bright.astype(np.float64),
-        minlength=n_unique,
-    )
-
-    dark_below_threshold = np.concatenate([[0.0], np.cumsum(dark_by_score)])
-    bright_below_threshold = np.concatenate([[0.0], np.cumsum(bright_by_score)])
-
-    false_bright = n_dark - dark_below_threshold
-    false_dark = bright_below_threshold
-    fidelities = 1.0 - 0.5 * (
-        false_bright / total_dark + false_dark / total_bright
-    )
-
-    score_span = float(unique_scores[-1] - unique_scores[0])
-    edge_pad = max(score_span * 1e-6, abs(float(unique_scores[0])) * 1e-6, 1e-12)
-
-    if n_unique == 1:
-        candidate_thresholds = np.array(
-            [unique_scores[0] - edge_pad, unique_scores[0] + edge_pad],
-            dtype=np.float64,
-        )
-    else:
-        midpoint_thresholds = (unique_scores[:-1] + unique_scores[1:]) / 2.0
-        candidate_thresholds = np.concatenate(
-            [
-                [unique_scores[0] - edge_pad],
-                midpoint_thresholds,
-                [unique_scores[-1] + edge_pad],
-            ]
-        )
-
-    best_fid = float(np.max(fidelities))
-    best_indices = np.flatnonzero(
-        np.isclose(fidelities, best_fid, rtol=1e-12, atol=1e-12)
-    )
-
-    run_starts = np.r_[0, np.flatnonzero(np.diff(best_indices) > 1) + 1]
-    run_ends = np.r_[run_starts[1:], best_indices.size]
-    best_run = None
-    best_run_width = -np.inf
-
-    for start, end in zip(run_starts, run_ends):
-        run = best_indices[start:end]
-        width = candidate_thresholds[run[-1]] - candidate_thresholds[run[0]]
-        if width > best_run_width:
-            best_run_width = width
-            best_run = run
-
-    best_t = 0.5 * (
-        candidate_thresholds[best_run[0]]
-        + candidate_thresholds[best_run[-1]]
-    )
-
-    return float(best_t), best_fid
-
 
 def tune_thresholds(scores, labels):
     n_qubits = labels.shape[1]
@@ -218,6 +136,28 @@ def fit_sigmas_from_average_image(avg_image, sites, fit_size=9):
         sigmas.append(sigma)
 
     return np.asarray(sigmas, dtype=np.float32)
+
+
+def fit_shared_sigma_from_average_image(avg_image, sites):
+    """One PSF sigma for all sites, fitted to the whole average image at once.
+
+    Every site is a Gaussian on its site position with its own brightness, plus one
+    flat background. Only sigma is searched; brightnesses and background are solved
+    linearly for each candidate sigma.
+    """
+    height, width = avg_image.shape
+    yy, xx = np.mgrid[0:height, 0:width]
+    sites = np.asarray(sites, dtype=np.float64)
+    squared = (xx.reshape(-1, 1) - sites[:, 0]) ** 2 + (yy.reshape(-1, 1) - sites[:, 1]) ** 2
+    image = np.asarray(avg_image, dtype=np.float64).ravel()
+    background = np.ones((image.size, 1))
+
+    def residual(sigma):
+        design = np.hstack([np.exp(-squared / (2 * sigma ** 2)), background])
+        coefficients = np.linalg.lstsq(design, image, rcond=None)[0]
+        return float(np.sum((design @ coefficients - image) ** 2))
+
+    return float(minimize_scalar(residual, bounds=(0.2, 10.0), method="bounded").x)
 # ---------------------------------------------------------------------
 # Square scoring
 # ---------------------------------------------------------------------
@@ -569,7 +509,7 @@ def main(data_dir, model_dir):
 
         square_save_obj = {
             **square_trained,
-            "h5_path": h5_path,
+            "h5_path": path_from_root(h5_path),
             "train_idx": train_idx,
             "val_idx": val_idx,
             "test_idx": test_idx,
@@ -589,7 +529,7 @@ def main(data_dir, model_dir):
 
         gaussian_save_obj = {
             **gaussian_trained,
-            "h5_path": h5_path,
+            "h5_path": path_from_root(h5_path),
             "train_idx": train_idx,
             "val_idx": val_idx,
             "test_idx": test_idx,

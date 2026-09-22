@@ -1,8 +1,162 @@
+import os
+import re
+from pathlib import Path
+
 import torch
 import h5py
 import numpy as np
 import torch.nn.functional as F
 from torch.utils.data import Dataset
+
+# ---------------------------------------------------------------------------
+# Dataset and model filenames
+#
+# Every dataset is  qubit_dataset_sim_<exposure seconds>.h5  and every model is
+# qubit_dataset_sim_<exposure seconds>_<method>.joblib.  The exposure lives in
+# the filename in SECONDS; almost everything downstream wants MILLISECONDS.
+# ---------------------------------------------------------------------------
+
+project_root = Path(__file__).resolve().parents[1]
+
+
+def path_from_root(path):
+    return os.path.relpath(Path(path).resolve(), project_root)
+
+
+dataset_prefix = "qubit_dataset_sim"
+exposure_re = re.compile(rf"{dataset_prefix}_([0-9]+(?:\.[0-9]+)?)")
+h5_name_re = re.compile(rf"{dataset_prefix}_([0-9]+(?:\.[0-9]+)?)\.h5$")
+model_name_re = re.compile(rf"{dataset_prefix}_([0-9]+(?:\.[0-9]+)?)_(.+)\.joblib$")
+
+
+def dataset_stem(exposure):
+    """0.026 -> 'qubit_dataset_sim_0.026'. Takes seconds, not milliseconds."""
+    return f"{dataset_prefix}_{exposure:g}"
+
+
+def exposure_s(path):
+    """Exposure in seconds, from a dataset or model filename."""
+    match = exposure_re.match(Path(path).name)
+    if match is None:
+        raise ValueError(f"no exposure in filename: {path}")
+    return float(match.group(1))
+
+
+def exposure_ms(path):
+    """Exposure in milliseconds, from a dataset or model filename."""
+    return 1000.0 * exposure_s(path)
+
+
+def model_method(path):
+    """The method suffix of a model filename, e.g. 'lightweight_cnn_site'."""
+    match = model_name_re.fullmatch(Path(path).name)
+    if match is None:
+        raise ValueError(f"not a model filename: {path}")
+    return match.group(2)
+
+
+def parse_model_name(path):
+    """(exposure_s, exposure_ms, method), or None if the name is not a model.
+
+    Returns None rather than raising because callers glob whole directories and
+    use this to filter out the files that are not exposure-tagged models.
+    """
+    match = model_name_re.fullmatch(Path(path).name)
+    if match is None:
+        return None
+    seconds = float(match.group(1))
+    return seconds, 1000.0 * seconds, match.group(2)
+
+
+def exposure_matches(exposure, selected_exposures):
+    """An empty selection means "no filter", so everything matches."""
+    if not selected_exposures:
+        return True
+    return any(np.isclose(exposure, selected) for selected in selected_exposures)
+
+
+def method_matches(method, selected_methods):
+    if not selected_methods:
+        return True
+    return method in set(selected_methods)
+
+
+def find_h5_for_exposure(data_dir, exposure):
+    """The dataset for an exposure in seconds, matched numerically.
+
+    The exact name is tried first; the scan after it is what catches datasets
+    written with a different float repr (0.010 vs 0.01).
+    """
+    data_dir = Path(data_dir)
+
+    expected = data_dir / f"{dataset_stem(exposure)}.h5"
+    if expected.exists():
+        return expected
+
+    for path in sorted(data_dir.glob(f"{dataset_prefix}_*.h5")):
+        match = h5_name_re.fullmatch(path.name)
+        if match is not None and np.isclose(float(match.group(1)), exposure):
+            return path
+
+    raise FileNotFoundError(
+        f"could not find dataset for exposure {exposure:g} s in {data_dir}"
+    )
+
+
+def resolve_h5_path(model, data_dir, exposure):
+    """The dataset a model was trained on, else the one in data_dir with its exposure in seconds."""
+    h5_path = model.get("h5_path")
+    if h5_path is not None and Path(h5_path).exists():
+        return Path(h5_path)
+    return find_h5_for_exposure(data_dir, exposure)
+
+
+splits_method_families = (
+    "cnn_array",
+    "cnn_site",
+    "lightweight_cnn_site",
+    "mf_site",
+    "mf_array_gaussian",
+    "mf_array",
+)
+
+
+def fold_splits_method(method):
+    """'mf_site_10_splits' -> 'mf_site'; every other method name comes back unchanged."""
+    if method.endswith("_splits"):
+        for family in splits_method_families:
+            if method.startswith(f"{family}_"):
+                return family
+    return method
+
+
+def make_random_split(
+    n_samples: int,
+    seed: int,
+    train_fraction: float = 0.60,
+    val_fraction: float = 0.20,
+):
+    if n_samples < 5:
+        raise ValueError("At least 5 samples are required.")
+
+    rng = np.random.default_rng(seed)
+    indices = rng.permutation(n_samples)
+
+    n_train = int(train_fraction * n_samples)
+    n_val = int(val_fraction * n_samples)
+
+    train_idx = indices[:n_train]
+    val_idx = indices[n_train:n_train + n_val]
+    test_idx = indices[n_train + n_val:]
+
+    return train_idx, val_idx, test_idx
+
+
+def fill_rate(path):
+    """Fill percentage of a 'fill_<n>' directory, or of a dataset inside one."""
+    path = Path(path)
+    directory = path if path.name.startswith("fill_") else path.parent
+    return int(directory.name.split("_")[1])
 
 def sync_device(device):
     device = str(device)
@@ -19,80 +173,54 @@ def get_device():
         return "mps"
     return "cpu"
 
-# def extract_patches(images, sites, s):
-#     """
-#     images: (B, H, W)
-#     sites:  (Q, 2), where sites[:, 0] = x, sites[:, 1] = y in image pixel coordinates
-#
-#     returns:
-#         X: (B, Q, s*s)
-#     """
-#     Batch, H, W = images.shape
-#     Qubits = sites.shape[0]
-#     device = images.device
-#
-#     x = sites[:, 0].to(device)
-#     y = sites[:, 1].to(device)
-#
-#     # Use symmetric offsets around the subpixel site center.
-#     offsets = torch.arange(s, device=device).float() - (s - 1) / 2
-#     dy, dx = torch.meshgrid(offsets, offsets, indexing="ij")
-#
-#     sample_x = x[:, None, None] + dx[None, :, :]  # (Q, s, s)
-#     sample_y = y[:, None, None] + dy[None, :, :]  # (Q, s, s)
-#
-#     # Convert pixel coordinates to grid_sample coordinates in [-1, 1].
-#     grid_x = 2.0 * sample_x / (W - 1) - 1.0
-#     grid_y = 2.0 * sample_y / (H - 1) - 1.0
-#
-#     grid = torch.stack([grid_x, grid_y], dim=-1)  # (Q, s, s, 2)
-#
-#     # Repeat the same site grid for every image in the batch.
-#     grid = grid[None].expand(Batch, Qubits, s, s, 2).reshape(Batch, Qubits * s, s, 2)
-#
-#     img = images[:, None, :, :]  # (B, 1, H, W)
-#
-#     patches = F.grid_sample(
-#         img,
-#         grid,
-#         mode="bilinear",
-#         padding_mode="zeros",
-#         align_corners=True,
-#     )
-#
-#     patches = patches[:, 0]
-#     patches = patches.reshape(Batch, Qubits, s, s)
-#     return patches.reshape(Batch, Qubits, s * s)
-
 def extract_patches(images, sites, s):
     """
     images: (B, H, W)
-    sites:  (Q, 2), where sites[:, 0] = x, sites[:, 1] = y
+    sites:  (Q, 2) or (B, Q, 2), where x is column and y is row
 
     returns:
         X: (B, Q, s*s)
 
     No interpolation: sites are rounded to nearest integer pixel.
     """
-    Batch, H, W = images.shape
-    Qubits = sites.shape[0]
+    batch = images.shape[0]
     device = images.device
+    sites = sites.to(device)
 
     half = s // 2
     pad = half + 1
 
     padded = F.pad(images, pad=(pad, pad, pad, pad), mode="constant", value=0.0)
-
-    center_x = torch.round(sites[:, 0].to(device)).long() + pad
-    center_y = torch.round(sites[:, 1].to(device)).long() + pad
-
     offsets = torch.arange(s, device=device, dtype=torch.long) - half
 
-    patch_x = center_x[:, None] + offsets[None, :]
-    patch_y = center_y[:, None] + offsets[None, :]
+    if sites.ndim == 2:
+        n_qubits = sites.shape[0]
+        center_x = torch.round(sites[:, 0]).long() + pad
+        center_y = torch.round(sites[:, 1]).long() + pad
 
-    patches = padded[:, patch_y[:, :, None], patch_x[:, None, :]]
-    return patches.reshape(Batch, Qubits, s * s)
+        patch_x = center_x[:, None] + offsets[None, :]
+        patch_y = center_y[:, None] + offsets[None, :]
+
+        patches = padded[:, patch_y[:, :, None], patch_x[:, None, :]]
+        return patches.reshape(batch, n_qubits, s * s)
+
+    if sites.ndim == 3:
+        if sites.shape[0] != batch:
+            raise ValueError(
+                f"per-image sites batch size {sites.shape[0]} does not match images batch size {batch}"
+            )
+        n_qubits = sites.shape[1]
+        center_x = torch.round(sites[:, :, 0]).long() + pad
+        center_y = torch.round(sites[:, :, 1]).long() + pad
+
+        patch_x = center_x[:, :, None] + offsets[None, None, :]
+        patch_y = center_y[:, :, None] + offsets[None, None, :]
+        batch_index = torch.arange(batch, device=device)[:, None, None, None]
+
+        patches = padded[batch_index, patch_y[:, :, :, None], patch_x[:, :, None, :]]
+        return patches.reshape(batch, n_qubits, s * s)
+
+    raise ValueError(f"sites must have shape (Q, 2) or (B, Q, 2), got {tuple(sites.shape)}")
 
 
 mf_array_neighbor_offsets = (
@@ -156,13 +284,7 @@ def gaussian_weighted_patch_values(X, s, sigmas, normalize=False):
     return torch.einsum("bqd,qd->bq", X, kernels)
 
 
-def mf_array_site_context_values(
-    X,
-    s,
-    mf_array_gaussian=False,
-    mf_array_sigmas=None,
-    mf_array_gaussian_normalize=False,
-):
+def mf_array_site_context_values(X, s, mf_array_gaussian=False, mf_array_sigmas=None, mf_array_gaussian_normalize=False):
     if mf_array_gaussian:
         if mf_array_sigmas is None:
             raise ValueError("mf_array_gaussian=True requires mf_array_sigmas")
@@ -210,17 +332,8 @@ def indexed_neighbor_values(site_values, q, neighbor_indices):
     return values
 
 
-def learn_W(
-    dataloader,
-    s,
-    mf_array=False,
-    alpha=0.0,
-    device="cpu",
-    mf_array_gaussian=False,
-    mf_array_sigmas=None,
-    mf_array_gaussian_normalize=False,
-    mf_array_neighbor_indices=None,
-):
+def learn_W(dataloader,s, mf_array=False, alpha=0.0, device="cpu", mf_array_gaussian=False, mf_array_sigmas=None,
+            mf_array_gaussian_normalize=False, mf_array_neighbor_indices=None):
     sites = dataloader.dataset.sites
     n_qubits = sites.shape[0]
     patch_dim = s * s
@@ -311,17 +424,8 @@ def learn_W(
 
 
 @torch.no_grad()
-def calc_score(
-    dataloader,
-    s,
-    W,
-    mf_array=False,
-    device="cpu",
-    mf_array_gaussian=False,
-    mf_array_sigmas=None,
-    mf_array_gaussian_normalize=False,
-    mf_array_neighbor_indices=None,
-):
+def calc_score(dataloader, s, W, mf_array=False, device="cpu", mf_array_gaussian=False, mf_array_sigmas=None,
+               mf_array_gaussian_normalize=False, mf_array_neighbor_indices=None):
     all_scores = []
     all_labels = []
 
@@ -473,7 +577,20 @@ class H5Dataset(Dataset):
 
         with h5py.File(h5_path, "r") as f:
             self.n = f[image_key].shape[0]
-            self.sites = torch.from_numpy(f[site_key][:]).float()
+            site_shape = tuple(f[site_key].shape)
+            if len(site_shape) == 2 and site_shape[1] == 2:
+                self.sites_are_per_image = False
+                self.n_sites = int(site_shape[0])
+                self.sites = torch.from_numpy(f[site_key][:]).float()
+            elif len(site_shape) == 3 and site_shape[0] == self.n and site_shape[2] == 2:
+                self.sites_are_per_image = True
+                self.n_sites = int(site_shape[1])
+                self.sites = torch.from_numpy(f[site_key][0]).float()
+            else:
+                raise ValueError(
+                    "sites must have shape (n_sites, 2) or (n_images, n_sites, 2), "
+                    f"got {site_shape}"
+                )
 
         if indices is None:
             self.indices = list(range(self.n))
@@ -505,5 +622,9 @@ class H5Dataset(Dataset):
 
         image = torch.from_numpy(image_np).float()
         label = torch.from_numpy(f[self.label_key][i]).float()
+        if self.sites_are_per_image:
+            sites = torch.from_numpy(f[self.site_key][i].astype(np.float32)).float()
+        else:
+            sites = self.sites
 
-        return image, label, self.sites
+        return image, label, sites

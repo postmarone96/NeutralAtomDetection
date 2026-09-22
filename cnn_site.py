@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
 
 from mf_site import classification_fidelity
-from utils import H5Dataset, extract_patches, get_device
+from utils import H5Dataset, extract_patches, get_device, make_random_split, path_from_root
 
 
 # default_data_dir = Path(
@@ -30,28 +30,6 @@ num_workers = 2
 base_seed = 42
 device = "cuda"
 site_crop_cache_version = 1
-
-
-def make_random_split(
-    n_samples: int,
-    seed: int,
-    train_fraction: float = 0.60,
-    val_fraction: float = 0.20,
-):
-    if n_samples < 5:
-        raise ValueError("At least 5 samples are required.")
-
-    rng = np.random.default_rng(seed)
-    indices = rng.permutation(n_samples)
-
-    n_train = int(train_fraction * n_samples)
-    n_val = int(val_fraction * n_samples)
-
-    train_idx = indices[:n_train]
-    val_idx = indices[n_train:n_train + n_val]
-    test_idx = indices[n_train + n_val:]
-
-    return train_idx, val_idx, test_idx
 
 
 def set_random_seed(seed, device="cpu"):
@@ -598,8 +576,8 @@ def make_site_loader(
     mean_image,
     scale,
     batch_size,
-    num_workers,
-    shuffle,
+    num_workers=10,
+    shuffle=False,
     pin_memory=False,
     crop_cache_path=None,
     return_sites=False,
@@ -868,8 +846,7 @@ def train_cnn_site(
 
     return {
         "method": "cnn_site",
-        "architecture": "cnn_site_3conv_128fc",
-        "state_dict": best_state,
+                "state_dict": best_state,
         "crop_size": int(crop_size),
         "threshold": thresholds,
         "val_fidelity": fidelities,
@@ -1080,7 +1057,7 @@ def main(
         save_obj = {
             **trained,
             "method": "cnn_site",
-            "h5_path": str(h5_path),
+            "h5_path": path_from_root(h5_path),
             "seed": base_seed,
             "train_idx": result["train_idx"],
             "val_idx": result["val_idx"],
@@ -1108,8 +1085,7 @@ def main(
             "test_errors_per_site": result["test_errors_per_site"],
             "test_total_errors": result["test_total_errors"],
             "preprocessing": "subtract_train_global_mean_divide_train_pixel_range",
-            "architecture": "cnn_site_3conv_128fc",
-        }
+                    }
 
         joblib.dump(save_obj, output_path)
 

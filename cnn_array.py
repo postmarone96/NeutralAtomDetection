@@ -11,11 +11,10 @@ from tqdm.auto import tqdm
 from cnn_site import (
     cnn_site_decision_threshold,
     compute_cnn_preprocessing,
-    make_random_split,
     set_random_seed,
 )
 from mf_site import classification_fidelity
-from utils import H5Dataset, get_device
+from utils import H5Dataset, get_device, make_random_split, path_from_root
 
 
 default_data_dir = Path(
@@ -418,8 +417,7 @@ def train_cnn_array(
 
     return {
         "method": "cnn_array",
-        "architecture": "cnn_array_3conv_128_64_fc_heads",
-        "state_dict": best_state,
+                "state_dict": best_state,
         "crop_size": int(crop_size),
         "n_sites": int(n_sites),
         "threshold": thresholds,
@@ -583,7 +581,7 @@ def main(
         save_obj = {
             **trained,
             "method": "cnn_array",
-            "h5_path": str(h5_path),
+            "h5_path": path_from_root(h5_path),
             "seed": base_seed,
             "train_idx": result["train_idx"],
             "val_idx": result["val_idx"],
@@ -602,8 +600,7 @@ def main(
             "test_errors_per_site": result["test_errors_per_site"],
             "test_total_errors": result["test_total_errors"],
             "preprocessing": "subtract_train_global_mean_divide_train_pixel_range",
-            "architecture": "cnn_array_3conv_128_64_fc_heads",
-        }
+                    }
 
         joblib.dump(save_obj, output_path)
 

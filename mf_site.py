@@ -7,8 +7,9 @@ from pathlib import Path
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from utils import (
+    path_from_root,
     get_device, H5Dataset, compute_preprocessing,
-    learn_W, calc_score
+    learn_W, calc_score, make_random_split
 )
 
 
@@ -339,27 +340,6 @@ def evaluate_best_model(dataloader, best, device="cpu"):
 #         print("Total test errors:", trained["test_total_errors"])
 #
 #         print("\nSaved model:", out_model)
-def make_random_split(
-    n_samples: int,
-    seed: int,
-    train_fraction: float = 0.60,
-    val_fraction: float = 0.20,
-):
-    if n_samples < 5:
-        raise ValueError("At least 5 samples are required.")
-
-    rng = np.random.default_rng(seed)
-    indices = rng.permutation(n_samples)
-
-    n_train = int(train_fraction * n_samples)
-    n_val = int(val_fraction * n_samples)
-
-    train_idx = indices[:n_train]
-    val_idx = indices[n_train:n_train + n_val]
-    test_idx = indices[n_train + n_val:]
-
-    return train_idx, val_idx, test_idx
-
 def run_one_split(
     h5_path,
     split_seed,
@@ -557,7 +537,7 @@ def main(data_dir, model_dir):
         save_obj = {
             **summary,
             "method": "mf_site_repeated_splits",
-            "h5_path": str(h5_path),
+            "h5_path": path_from_root(h5_path),
             "s_values": list(s_values),
             "alpha": alpha,
             "batch_size": batch_size,

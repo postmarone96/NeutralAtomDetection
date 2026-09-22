@@ -1,10 +1,15 @@
 from pathlib import Path
+import sys
+
+project_root = Path(__file__).resolve().parents[1]
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 import joblib
 import torch
 
 
-model_dir = Path("models_3x3")
+model_dir = project_root / "models_3x3"
 patterns = (
     "*cnn_site*.joblib",
 )
@@ -59,12 +64,9 @@ def main(model_dir=model_dir, patterns=patterns, show_tensors=False):
 
         total, by_tensor = count_state_dict_parameters(state_dict)
         method = str(obj.get("method", "unknown"))
-        architecture = str(obj.get("architecture", "unknown"))
         crop_size = obj.get("crop_size", "—")
 
         print(f"{total:>12,d}  {method:<42}  {crop_size:>4}  {path.name}")
-        if architecture != "unknown":
-            print(f"{'':>12}  architecture: {architecture}")
 
         if show_tensors:
             for name, count, shape in by_tensor:
