@@ -1,2 +1,10 @@
 .idea/
 .data/
+/real_data/output/
+/output_real/
+/models_3x3/
+/models_3x3_4_8_16/
+/out/
+/output/
+/output_3x3/
+/dataset_3x3/

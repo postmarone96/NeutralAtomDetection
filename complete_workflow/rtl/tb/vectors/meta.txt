@@ -1,0 +1,4 @@
+images 8
+sites 9
+crop 10
+neighbors 8
