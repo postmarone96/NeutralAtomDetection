@@ -1,0 +1,9 @@
+{
+  "source": "/u/home/hajm/NeutralAtomDetection/complete_workflow/rtl/impl/alveo_400_single_cnn_20261008/hardware/profiles/single_91fmjf19/native_trace.csv",
+  "measurement": "XRT native host API timestamps, including transfers and launch/wait",
+  "input_start_ms": 60.274778,
+  "input_end_ms": 60.292028,
+  "output_start_ms": 60.535038,
+  "output_end_ms": 60.574768,
+  "end_to_end_us": 299.99
+}

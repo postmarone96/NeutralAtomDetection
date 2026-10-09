@@ -12,6 +12,8 @@ def test_mac_unit_runner():
     runner.build(
         sources=[
             rtl / "helpers_pkg.vhd",
+            rtl / "nn_pkg.vhd",
+            rtl / "weights_pkg.vhd",
             rtl / "mac_array.vhd",
             here / "mac_array_wrapper.vhd",
         ],

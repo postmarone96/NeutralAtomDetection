@@ -7,6 +7,7 @@ import h5py
 import numpy as np
 import torch.nn.functional as F
 from torch.utils.data import Dataset
+import constants
 
 # ---------------------------------------------------------------------------
 # Dataset and model filenames
@@ -23,7 +24,7 @@ def path_from_root(path):
     return os.path.relpath(Path(path).resolve(), project_root)
 
 
-dataset_prefix = "qubit_dataset_sim"
+dataset_prefix = constants.dataset_prefix
 exposure_re = re.compile(rf"{dataset_prefix}_([0-9]+(?:\.[0-9]+)?)")
 h5_name_re = re.compile(rf"{dataset_prefix}_([0-9]+(?:\.[0-9]+)?)\.h5$")
 model_name_re = re.compile(rf"{dataset_prefix}_([0-9]+(?:\.[0-9]+)?)_(.+)\.joblib$")
@@ -133,8 +134,8 @@ def fold_splits_method(method):
 def make_random_split(
     n_samples: int,
     seed: int,
-    train_fraction: float = 0.60,
-    val_fraction: float = 0.20,
+    train_fraction: float = constants.split_train_fraction,
+    val_fraction: float = constants.split_val_fraction,
 ):
     if n_samples < 5:
         raise ValueError("At least 5 samples are required.")

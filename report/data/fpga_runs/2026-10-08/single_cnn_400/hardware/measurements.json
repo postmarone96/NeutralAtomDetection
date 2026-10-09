@@ -1,0 +1,510 @@
+{
+  "measured_at": "2026-10-08T16:52:53.077945+02:00",
+  "design": "3x3, one CNN, one pixel per clock",
+  "frequency_mhz": 400,
+  "device": 0,
+  "xclbin": "/u/home/hajm/NeutralAtomDetection/complete_workflow/rtl/impl/alveo_400_single_cnn_20261008/neutral_atom_detector.xclbin",
+  "xclbin_sha256": "ae49add3253ff3116059f6034c3e648f5ad9ee4ba2a65801500316641b793292",
+  "input_sha256": "d664eefa41ca8bfd00413a605e62bc5a2c45989044e80a4e6dc25194d5c6fb87",
+  "reference_sha256": "5d30ffd1f9065c840364267ae632765d2f06a8283b116cc25699ece92d862bf8",
+  "golden_frames_passed": 8,
+  "golden_predictions_passed": 72,
+  "measurements": [
+    {
+      "frame_index": 0,
+      "predictions": [
+        [
+          -53,
+          44,
+          1
+        ],
+        [
+          -32,
+          27,
+          1
+        ],
+        [
+          -55,
+          46,
+          1
+        ],
+        [
+          7,
+          -1,
+          0
+        ],
+        [
+          5,
+          0,
+          0
+        ],
+        [
+          -14,
+          13,
+          1
+        ],
+        [
+          -51,
+          43,
+          1
+        ],
+        [
+          13,
+          -3,
+          0
+        ],
+        [
+          -73,
+          60,
+          1
+        ]
+      ],
+      "preprocess_cycles": 802,
+      "cnn_cycles": 858,
+      "pipeline_cycles": 8559,
+      "xrt_timing": {
+        "source": "/u/home/hajm/NeutralAtomDetection/complete_workflow/rtl/impl/alveo_400_single_cnn_20261008/hardware/profiles/single_86cito3f/native_trace.csv",
+        "measurement": "XRT native host API timestamps, including transfers and launch/wait",
+        "input_start_ms": 4992.666722,
+        "input_end_ms": 4992.698552,
+        "output_start_ms": 5004.743864,
+        "output_end_ms": 5004.804813,
+        "end_to_end_us": 12138.091
+      }
+    },
+    {
+      "frame_index": 1,
+      "predictions": [
+        [
+          15,
+          -5,
+          0
+        ],
+        [
+          15,
+          -5,
+          0
+        ],
+        [
+          14,
+          -5,
+          0
+        ],
+        [
+          12,
+          -3,
+          0
+        ],
+        [
+          -34,
+          29,
+          1
+        ],
+        [
+          6,
+          1,
+          0
+        ],
+        [
+          -38,
+          32,
+          1
+        ],
+        [
+          -5,
+          7,
+          1
+        ],
+        [
+          8,
+          -1,
+          0
+        ]
+      ],
+      "preprocess_cycles": 802,
+      "cnn_cycles": 858,
+      "pipeline_cycles": 8559,
+      "xrt_timing": {
+        "source": "/u/home/hajm/NeutralAtomDetection/complete_workflow/rtl/impl/alveo_400_single_cnn_20261008/hardware/profiles/single_0i15esr9/native_trace.csv",
+        "measurement": "XRT native host API timestamps, including transfers and launch/wait",
+        "input_start_ms": 132.253126,
+        "input_end_ms": 132.274776,
+        "output_start_ms": 132.493516,
+        "output_end_ms": 132.534746,
+        "end_to_end_us": 281.62
+      }
+    },
+    {
+      "frame_index": 2,
+      "predictions": [
+        [
+          13,
+          -4,
+          0
+        ],
+        [
+          13,
+          -4,
+          0
+        ],
+        [
+          12,
+          -3,
+          0
+        ],
+        [
+          14,
+          -5,
+          0
+        ],
+        [
+          -5,
+          8,
+          1
+        ],
+        [
+          -41,
+          34,
+          1
+        ],
+        [
+          11,
+          -3,
+          0
+        ],
+        [
+          -2,
+          6,
+          1
+        ],
+        [
+          15,
+          -6,
+          0
+        ]
+      ],
+      "preprocess_cycles": 802,
+      "cnn_cycles": 858,
+      "pipeline_cycles": 8559,
+      "xrt_timing": {
+        "source": "/u/home/hajm/NeutralAtomDetection/complete_workflow/rtl/impl/alveo_400_single_cnn_20261008/hardware/profiles/single_w_kiatz0/native_trace.csv",
+        "measurement": "XRT native host API timestamps, including transfers and launch/wait",
+        "input_start_ms": 60.608858,
+        "input_end_ms": 60.663647,
+        "output_start_ms": 60.997987,
+        "output_end_ms": 61.037667,
+        "end_to_end_us": 428.809
+      }
+    },
+    {
+      "frame_index": 3,
+      "predictions": [
+        [
+          6,
+          0,
+          0
+        ],
+        [
+          -37,
+          31,
+          1
+        ],
+        [
+          11,
+          -3,
+          0
+        ],
+        [
+          -44,
+          37,
+          1
+        ],
+        [
+          12,
+          -4,
+          0
+        ],
+        [
+          13,
+          -4,
+          0
+        ],
+        [
+          -48,
+          40,
+          1
+        ],
+        [
+          3,
+          2,
+          0
+        ],
+        [
+          11,
+          -3,
+          0
+        ]
+      ],
+      "preprocess_cycles": 802,
+      "cnn_cycles": 858,
+      "pipeline_cycles": 8559,
+      "xrt_timing": {
+        "source": "/u/home/hajm/NeutralAtomDetection/complete_workflow/rtl/impl/alveo_400_single_cnn_20261008/hardware/profiles/single__mw0a58y/native_trace.csv",
+        "measurement": "XRT native host API timestamps, including transfers and launch/wait",
+        "input_start_ms": 60.567937,
+        "input_end_ms": 60.585987,
+        "output_start_ms": 60.817317,
+        "output_end_ms": 60.857727,
+        "end_to_end_us": 289.79
+      }
+    },
+    {
+      "frame_index": 4,
+      "predictions": [
+        [
+          9,
+          -3,
+          0
+        ],
+        [
+          -2,
+          5,
+          1
+        ],
+        [
+          13,
+          -5,
+          0
+        ],
+        [
+          -8,
+          11,
+          1
+        ],
+        [
+          -52,
+          44,
+          1
+        ],
+        [
+          -41,
+          34,
+          1
+        ],
+        [
+          -50,
+          42,
+          1
+        ],
+        [
+          -29,
+          24,
+          1
+        ],
+        [
+          17,
+          -7,
+          0
+        ]
+      ],
+      "preprocess_cycles": 802,
+      "cnn_cycles": 858,
+      "pipeline_cycles": 8559,
+      "xrt_timing": {
+        "source": "/u/home/hajm/NeutralAtomDetection/complete_workflow/rtl/impl/alveo_400_single_cnn_20261008/hardware/profiles/single_6_s_io3w/native_trace.csv",
+        "measurement": "XRT native host API timestamps, including transfers and launch/wait",
+        "input_start_ms": 61.459277,
+        "input_end_ms": 61.476767,
+        "output_start_ms": 61.717937,
+        "output_end_ms": 61.758417,
+        "end_to_end_us": 299.14
+      }
+    },
+    {
+      "frame_index": 5,
+      "predictions": [
+        [
+          16,
+          -5,
+          0
+        ],
+        [
+          12,
+          -4,
+          0
+        ],
+        [
+          12,
+          -3,
+          0
+        ],
+        [
+          16,
+          -6,
+          0
+        ],
+        [
+          8,
+          0,
+          0
+        ],
+        [
+          -59,
+          49,
+          1
+        ],
+        [
+          -1,
+          5,
+          1
+        ],
+        [
+          -55,
+          46,
+          1
+        ],
+        [
+          -45,
+          38,
+          1
+        ]
+      ],
+      "preprocess_cycles": 802,
+      "cnn_cycles": 858,
+      "pipeline_cycles": 8559,
+      "xrt_timing": {
+        "source": "/u/home/hajm/NeutralAtomDetection/complete_workflow/rtl/impl/alveo_400_single_cnn_20261008/hardware/profiles/single_2tkds19b/native_trace.csv",
+        "measurement": "XRT native host API timestamps, including transfers and launch/wait",
+        "input_start_ms": 103.252422,
+        "input_end_ms": 103.270882,
+        "output_start_ms": 103.516082,
+        "output_end_ms": 103.557402,
+        "end_to_end_us": 304.98
+      }
+    },
+    {
+      "frame_index": 6,
+      "predictions": [
+        [
+          -57,
+          48,
+          1
+        ],
+        [
+          15,
+          -6,
+          0
+        ],
+        [
+          16,
+          -5,
+          0
+        ],
+        [
+          -49,
+          41,
+          1
+        ],
+        [
+          -1,
+          5,
+          1
+        ],
+        [
+          10,
+          -2,
+          0
+        ],
+        [
+          -37,
+          31,
+          1
+        ],
+        [
+          15,
+          -6,
+          0
+        ],
+        [
+          -37,
+          31,
+          1
+        ]
+      ],
+      "preprocess_cycles": 802,
+      "cnn_cycles": 858,
+      "pipeline_cycles": 8559,
+      "xrt_timing": {
+        "source": "/u/home/hajm/NeutralAtomDetection/complete_workflow/rtl/impl/alveo_400_single_cnn_20261008/hardware/profiles/single_91fmjf19/native_trace.csv",
+        "measurement": "XRT native host API timestamps, including transfers and launch/wait",
+        "input_start_ms": 60.274778,
+        "input_end_ms": 60.292028,
+        "output_start_ms": 60.535038,
+        "output_end_ms": 60.574768,
+        "end_to_end_us": 299.99
+      }
+    },
+    {
+      "frame_index": 7,
+      "predictions": [
+        [
+          -48,
+          40,
+          1
+        ],
+        [
+          -49,
+          41,
+          1
+        ],
+        [
+          2,
+          3,
+          1
+        ],
+        [
+          10,
+          -3,
+          0
+        ],
+        [
+          -14,
+          13,
+          1
+        ],
+        [
+          -34,
+          29,
+          1
+        ],
+        [
+          -32,
+          27,
+          1
+        ],
+        [
+          -14,
+          13,
+          1
+        ],
+        [
+          14,
+          -5,
+          0
+        ]
+      ],
+      "preprocess_cycles": 802,
+      "cnn_cycles": 858,
+      "pipeline_cycles": 8559,
+      "xrt_timing": {
+        "source": "/u/home/hajm/NeutralAtomDetection/complete_workflow/rtl/impl/alveo_400_single_cnn_20261008/hardware/profiles/single_2usrgpx6/native_trace.csv",
+        "measurement": "XRT native host API timestamps, including transfers and launch/wait",
+        "input_start_ms": 60.092717,
+        "input_end_ms": 60.110197,
+        "output_start_ms": 60.346607,
+        "output_end_ms": 60.386627,
+        "end_to_end_us": 293.91
+      }
+    }
+  ]
+}

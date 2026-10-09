@@ -1,0 +1,10 @@
+*.aux
+*.log
+*.out
+*.toc
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+!data/fpga_runs/2026-10-08/single_cnn_400/hardware_run.log
+!data/fpga_runs/2026-10-08/single_cnn_400/hardware/frame_*.log

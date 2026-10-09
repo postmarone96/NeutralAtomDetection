@@ -1,0 +1,37 @@
+\begin{tikzpicture}[x=1cm, y=1cm]
+    \fmap{0}{0.8}{0.4}{cConv}{c3}{Conv $3{\times}3$, 16\\ReLU}{$16{\times}2{\times}2$}{-1.5}
+    \fcbar{1.9}{64}{cFc}{fl}{Flatten}{64}{-1.5}
+
+    \pgfmathsetmacro{\bh}{0.2*sqrt(16)}
+    \draw[fill=cFc!70, draw=black!70, line width=0.3pt] (3.8-0.1,0) rectangle (3.8+0.1,\bh/2);
+    \draw[fill=cNeighbor!85, draw=black!70, line width=0.3pt] (3.8-0.1,-\bh/2) rectangle (3.8+0.1,0);
+    \coordinate (cat-l) at (3.8-0.1,0);
+    \coordinate (cat-r) at (3.8+0.1,0);
+    \node[anchor=south, align=center, text width=1.5cm, font=\fontsize{6.5}{7.5}\selectfont] at (3.8,0.55) {Concatenate\\FC $8+8$\\ReLU};
+
+    \fcbar{5.7}{8}{cFc}{f2}{FC\\ReLU}{8}{-1.5}
+    \fcbar{7.6}{2}{cFc}{f3}{FC}{2 logits}{-1.5}
+
+    \foreach \row in {0,1,2}{
+        \foreach \col in {0,1,2}{
+            \pgfmathsetmacro{\px}{3.8+(\col-1)*0.24}
+            \pgfmathsetmacro{\py}{-2.9-(\row-1)*0.24}
+            \ifnum\row=1
+                \ifnum\col=1
+                    \draw[fill=cInput, draw=black!70, line width=0.3pt] (\px-0.11,\py-0.11) rectangle (\px+0.11,\py+0.11);
+                \else
+                    \draw[fill=cNeighbor!85, draw=black!70, line width=0.3pt] (\px-0.11,\py-0.11) rectangle (\px+0.11,\py+0.11);
+                \fi
+            \else
+                \draw[fill=cNeighbor!85, draw=black!70, line width=0.3pt] (\px-0.11,\py-0.11) rectangle (\px+0.11,\py+0.11);
+            \fi
+        }
+    }
+    \node[anchor=north, align=center, text width=2.6cm, font=\fontsize{6.5}{7.5}\selectfont] at (3.8,-3.35) {8 neighbor values};
+    \draw[flow] (3.8,-2.5) -- (3.8,-\bh/2-0.03);
+
+    \draw[flow] (c3-r) -- (fl-l);
+    \draw[flow] (fl-r) -- (cat-l);
+    \draw[flow] (cat-r) -- (f2-l);
+    \draw[flow] (f2-r) -- (f3-l);
+\end{tikzpicture}

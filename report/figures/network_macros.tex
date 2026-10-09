@@ -1,0 +1,34 @@
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta}
+
+\definecolor{cInput}{HTML}{A8A7A0}
+\definecolor{cConv}{HTML}{B65D03}
+\definecolor{cPool}{HTML}{C74941}
+\definecolor{cFc}{HTML}{2A78D6}
+\definecolor{cNeighbor}{HTML}{259033}
+
+\newcommand{\netlabel}[3]{%
+    \node[anchor=north, align=center, text width=1.5cm, font=\fontsize{6.5}{7.5}\selectfont] at (#1,#3) {#2};%
+}
+
+\newcommand{\fmap}[8]{%
+    \pgfmathsetmacro{\fo}{0.4*#3}%
+    \pgfmathsetmacro{\fx}{#1-(#2+\fo)/2}%
+    \pgfmathsetmacro{\fy}{-#3/2-\fo/2}%
+    \draw[fill=#4!45, draw=black!70, line width=0.3pt] (\fx,\fy) rectangle ++(#2,#3);%
+    \draw[fill=#4!25, draw=black!70, line width=0.3pt] (\fx,\fy+#3) -- ++(#2,0) -- ++(\fo,\fo) -- ++(-#2,0) -- cycle;%
+    \draw[fill=#4!70, draw=black!70, line width=0.3pt] (\fx+#2,\fy) -- ++(\fo,\fo) -- ++(0,#3) -- ++(-\fo,-\fo) -- cycle;%
+    \coordinate (#5-l) at (\fx,0);%
+    \coordinate (#5-r) at (\fx+#2+\fo,0);%
+    \netlabel{#1}{#6\\#7}{#8}%
+}
+
+\newcommand{\fcbar}[7]{%
+    \pgfmathsetmacro{\bh}{0.2*sqrt(#2)}%
+    \draw[fill=#3!70, draw=black!70, line width=0.3pt] (#1-0.1,-\bh/2) rectangle (#1+0.1,\bh/2);%
+    \coordinate (#4-l) at (#1-0.1,0);%
+    \coordinate (#4-r) at (#1+0.1,0);%
+    \netlabel{#1}{#5\\#6}{#7}%
+}
+
+\tikzset{flow/.style={-{Stealth[length=1.5mm]}, line width=0.4pt}}

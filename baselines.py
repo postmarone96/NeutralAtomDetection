@@ -13,6 +13,7 @@ from mf_site import (
 )
 
 from utils import H5Dataset, get_device, extract_patches, path_from_root
+import constants
 
 # ---------------------------------------------------------------------
 # Threshold tuning
@@ -76,7 +77,7 @@ def circular_gaussian(coords, amp, x0, y0, sigma, offset):
     )
 
 
-def fit_sigmas_from_average_image(avg_image, sites, fit_size=9):
+def fit_sigmas_from_average_image(avg_image, sites, fit_size=constants.baselines_fit_size):
     """
     Fit one circular 2D Gaussian around each qubit site.
 
@@ -476,8 +477,8 @@ def main(data_dir, model_dir):
         rng = np.random.default_rng(seed)
         idx = rng.permutation(N)
 
-        n_train = int(0.6 * N)
-        n_val = int(0.2 * N)
+        n_train = int(constants.split_train_fraction * N)
+        n_val = int(constants.split_val_fraction * N)
 
         train_idx = idx[:n_train]
         val_idx = idx[n_train:n_train + n_val]
@@ -495,7 +496,7 @@ def main(data_dir, model_dir):
         fitted_sigmas = fit_sigmas_from_average_image(
             avg_image=avg_image,
             sites=sites,
-            fit_size=9,
+            fit_size=constants.baselines_fit_size,
         )
 
         square_trained = square_with_s_sweep(

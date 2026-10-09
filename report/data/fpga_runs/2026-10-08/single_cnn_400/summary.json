@@ -1,0 +1,11 @@
+{
+  "frequency_mhz": 400,
+  "golden_predictions_passed": 72,
+  "preprocess_us": 2.005,
+  "cnn_us": 2.145,
+  "pipeline_us": 21.3975,
+  "xrt_first_run_us": 12138.091,
+  "xrt_subsequent_min_us": 281.62,
+  "xrt_subsequent_max_us": 428.809,
+  "xrt_subsequent_mean_us": 314.03414285714285
+}

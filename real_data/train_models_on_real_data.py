@@ -22,30 +22,27 @@ from cnn_site import (
     build_site_crop_cache,
     run_one_split as run_cnn_site_split,
 )
-import lightweight_cnn_site as lightweight
-from lightweight_cnn_site import (
-    batch_norm as lightweight_cnn_batch_norm,
-    batch_size as lightweight_cnn_batch_size,
-    early_stopping_min_delta as lightweight_cnn_early_stopping_min_delta,
-    early_stopping_patience as lightweight_cnn_early_stopping_patience,
-    epochs as lightweight_cnn_epochs,
-    eval_batch_size as lightweight_cnn_eval_batch_size,
-    learning_rate as lightweight_cnn_learning_rate,
-    lightweight_cnn_site_method,
-    lightweight_cnn_site_neighbor_method,
-    lightweight_cnn_site_neighbor_weighted_method,
-    run_one_split as run_lightweight_cnn_site_split,
-)
+from lightweight_cnn_site import run_one_split as run_lightweight_cnn_site_split
 from mf_array import run_one_split as run_mf_array_split
 from plots.plot_learning_curves import plot_learning_curves
 from mf_site import classification_fidelity
 from mf_site import run_one_split as run_mf_site_split
 from utils import H5Dataset, make_random_split, path_from_root
+import constants
+
+lightweight_cnn_channels = constants.tinycnn_channels
+lightweight_cnn_batch_size = constants.tinycnn_batch_size
+lightweight_cnn_early_stopping_min_delta = constants.tinycnn_early_stopping_min_delta
+lightweight_cnn_early_stopping_patience = constants.tinycnn_early_stopping_patience
+lightweight_cnn_epochs = constants.tinycnn_epochs
+lightweight_cnn_eval_batch_size = constants.tinycnn_eval_batch_size
+lightweight_cnn_learning_rate = constants.tinycnn_learning_rate
+lightweight_cnn_site_method = constants.tinycnn_method
+lightweight_cnn_site_neighbor_method = constants.tinycnn_neighbor_method
+lightweight_cnn_site_neighbor_gaussian_method = constants.tinycnn_neighbor_gaussian_method
 
 base_seed = 43
-epochs = 300
-crop_size = lightweight_cnn_crop_size = 20
-lightweight_cnn_channels = lightweight.channels
+crop_size = 20
 num_workers = 20
 
 real_data_dir = Path(__file__).resolve().parent
@@ -62,8 +59,8 @@ real_dataset_jobs = {
     },
 }
 
-training_image_key = "image_2"
-label_image_key = "image_1"
+training_image_key = constants.experimental_input_image_key
+label_image_key = constants.experimental_label_image_key
 
 mf_s_values = range(2, 15, 2)
 mf_alpha = 1e-4
@@ -74,9 +71,9 @@ cnn_batch_size = 16052
 cnn_eval_batch_size = 32768
 
 lightweight_cnn_methods = (
-    # lightweight_cnn_site_method,
+    lightweight_cnn_site_method,
     lightweight_cnn_site_neighbor_method,
-    # lightweight_cnn_site_neighbor_weighted_method,
+    lightweight_cnn_site_neighbor_gaussian_method,
 )
 
 baseline_batch_size = 32
@@ -92,8 +89,8 @@ mf_array_neighbor_context = "coordinate_8_nearest"
 do_train_baselines = False
 do_train_mf_site = False
 do_train_mf_array = False
-do_train_cnn_site = True
-do_train_lightweight_cnn_site = False
+do_train_cnn_site = False
+do_train_lightweight_cnn_site = True
 resume = False
 
 
@@ -246,7 +243,7 @@ def train_baselines(h5_path, info, dataset_key, dataset_label, device):
     fitted_sigmas = fit_sigmas_from_average_image(
         avg_image=avg_image,
         sites=sites,
-        fit_size=9,
+        fit_size=constants.baselines_fit_size,
     )
 
     square_trained = square_with_s_sweep(
@@ -392,7 +389,7 @@ def train_cnn_site(h5_path, info, dataset_key, dataset_label, device, crop_cache
         split_seed=base_seed,
         crop_size=crop_size,
         learning_rate=learning_rate,
-        epochs=epochs,
+        epochs=lightweight_cnn_epochs,
         batch_size=cnn_batch_size,
         eval_batch_size=cnn_eval_batch_size,
         num_workers=num_workers,
@@ -433,7 +430,7 @@ def train_lightweight_cnn_site_variant(
     result = run_lightweight_cnn_site_split(
         h5_path=h5_path,
         split_seed=base_seed,
-        crop_size=lightweight_cnn_crop_size,
+        crop_size=crop_size,
         learning_rate=lightweight_cnn_learning_rate,
         epochs=lightweight_cnn_epochs,
         batch_size=lightweight_cnn_batch_size,
@@ -444,7 +441,6 @@ def train_lightweight_cnn_site_variant(
         early_stopping_min_delta=lightweight_cnn_early_stopping_min_delta,
         method=method_name,
         crop_cache_path=crop_cache_path,
-        batch_norm=lightweight_cnn_batch_norm,
         channels=lightweight_cnn_channels,
     )
     save_model(

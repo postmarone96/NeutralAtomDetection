@@ -10,21 +10,22 @@ import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 
+import constants
 from plots.plot_fidelity_delta_from_cnn_site import (
-    dpi,
-    figsize,
     one_error_note,
     one_error_pp,
-    y_axis_limits,
 )
-from plots.plot_fidelity_vs_exposure import display_method_label, only_4_8_16
+from plots.plot_fidelity_vs_exposure import assign_model_colors, display_method_label
 from plots.plot_learning_curves import plot_learning_curves
 
 
+dpi = constants.plot_delta_dpi
+figsize = (8.8*1.5, 5.4*0.6)
+y_axis_limits = constants.plot_delta_y_axis_limits
+
 real_data_dir = Path(__file__).resolve().parent
 output_dir = real_data_dir / "output"
-architecture_model_dir = output_dir / "models_4_8_16"
-model_dirs = (output_dir / "models", architecture_model_dir)
+model_dirs = (output_dir / "models",)
 plot_path = output_dir / "real_dataset_vs_cnn_site.png"
 csv_path = output_dir / "real_dataset_fidelity.csv"
 learning_curve_dir = output_dir / "learning_curves"
@@ -34,7 +35,7 @@ methods = (
     "cnn_site",
     "lightweight_cnn_site",
     "lightweight_cnn_site_neighbor",
-    "lightweight_cnn_site_neighbor_weighted",
+    "lightweight_cnn_site_neighbor_gaussian",
 )
 baseline_method = "cnn_site"
 marker_size = 90
@@ -129,10 +130,7 @@ def save_csv(records, path):
 
 
 def bar_label(record):
-    label = display_method_label(record["method"])
-    if record["channels"] and not only_4_8_16:
-        label += " " + "/".join(str(value) for value in record["channels"])
-    return label
+    return display_method_label(record["method"])
 
 
 def plot_records(records, path, legend_note):
@@ -150,13 +148,14 @@ def plot_records(records, path, legend_note):
 
     fig, ax = plt.subplots(figsize=figsize)
     ax.axhline(0.0, color="black", linewidth=1)
+    colors = assign_model_colors([record["method"] for record in rows])
 
     bars = []
     for position, record in enumerate(rows):
         reference = baseline[record["dataset_key"]]
         delta = 100.0 * (record["mean_fidelity"] - reference["mean_fidelity"])
         bars.append(
-            ax.bar(position, delta, width=0.55, zorder=2, color=f"C{position}")
+            ax.bar(position, delta, width=0.55, zorder=2, color=colors[record["method"]])
         )
         ax.annotate(
             f"{delta:+.2f}",
@@ -168,7 +167,7 @@ def plot_records(records, path, legend_note):
 
     ax.set_xticks([])
     ax.set_ylabel("Δ Fidelity (p.p.)")
-    ax.set_title("Fidelity Difference from CNN Site")
+    # ax.set_title("Fidelity Difference from CNN Site")
     if y_axis_limits is not None:
         ax.set_ylim(y_axis_limits)
     ax.grid(True, axis="y", alpha=0.3)
@@ -189,13 +188,6 @@ def main():
     records = collect_records()
     if not records:
         raise FileNotFoundError(f"no models for {methods} in {list(model_dirs)}")
-
-    if only_4_8_16:
-        records = [
-            record for record in records
-            if record["method"] == baseline_method
-            or record["source"] == str(architecture_model_dir)
-        ]
 
     add_error_ratios(records)
     print_records(records)

@@ -1,0 +1,30 @@
+\clearpage
+\section{Training Hyperparameters}\label{app:training}
+
+TinyCNN training is given a maximum budget of 800 epochs, with early stopping after 20 epochs without a validation loss improvement of at least $10^{-5}$. This upper limit provides sufficient headroom for slower-converging models. The model with the best validation loss is retained.
+
+\begin{table}[H]
+    \centering
+    \small
+    \setlength{\tabcolsep}{4pt}
+    \caption{CNN site training settings and the TinyCNN training budget.}
+    \begin{tabular}{@{}lccc@{}}
+        \toprule
+        & \multicolumn{2}{c}{CNN site} & TinyCNN \\
+        \cmidrule(lr){2-3}
+        & simulation & experimental & both \\
+        \midrule
+        Convolution channels & 32/64/128 & 32/64/128 & 4/8/16 \\
+        Optimizer & Adam & Adam & Adam \\
+        Loss & cross-entropy & cross-entropy & cross-entropy \\
+        Learning rate & $10^{-4}$ & $10^{-4}$ & $10^{-4}$ \\
+        Stored batch size & 64 & 64 & 64 \\
+        Maximum epochs & 40 & 300 & 800 \\
+        Early stopping patience & not used & 20 & 20 \\
+        Minimum loss improvement & not used & $10^{-5}$ & $10^{-5}$ \\
+        Crop size (pixels) & $10\times10$ & $20\times20$ & $10\times10$ / $20\times20$ \\
+        Split (train / val / test) & \multicolumn{3}{c}{60 / 20 / 20\,\%} \\
+        Random seed & 42 & 43 & 42 / 43 \\
+        \bottomrule
+    \end{tabular}
+\end{table}

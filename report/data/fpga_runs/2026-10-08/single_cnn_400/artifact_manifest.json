@@ -1,0 +1,30 @@
+{
+  "neutral_atom_detector.xclbin": {
+    "bytes": 49227379,
+    "sha256": "ae49add3253ff3116059f6034c3e648f5ad9ee4ba2a65801500316641b793292"
+  },
+  "level0_wrapper_routed.dcp": {
+    "bytes": 142195999,
+    "sha256": "3aa6da340b41d2cd7e19ae46e181f1fe1ebb6e113af02883ac29d91b027d80b2"
+  },
+  "source_manifest.sha256": {
+    "bytes": 4649,
+    "sha256": "ecc6e1f0197aa57bac4738f3ac91ac1e2f9e143d1fcb0f57faff7bec9bacaaef"
+  },
+  "upload_manifest.json": {
+    "bytes": 4970,
+    "sha256": "6e08de5b87d94cacfc10bb6c9993c64fe75ace4f3ad0f6fd5ad5fde22567d578"
+  },
+  "hardware/measurements.json": {
+    "bytes": 10018,
+    "sha256": "19fd8a8cdd74ee670e634ba24a40f8467e4a9b708396c495a159fe578bb904c7"
+  },
+  "reports/final/timing_routed.rpt": {
+    "bytes": 142837325,
+    "sha256": "2efb5c9da13855cc29233888755a3b62aeb9294f24e3d6e7e62de8c95229d218"
+  },
+  "reports/final/utilization_hierarchical_routed.rpt": {
+    "bytes": 2248538,
+    "sha256": "4f5c33c0d97502f1e428b45c53d975638a1b86e84633541508b394a154eb4343"
+  }
+}

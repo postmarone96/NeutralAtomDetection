@@ -1,0 +1,42 @@
+\section{Simulation Parameters}\label{app:sim}
+
+\begin{table}[H]
+    \centering
+    \caption{Parameters of the simulated datasets.}
+    \label{tab:simparams}
+    \begin{tabular}{@{}llr@{}}
+        \toprule
+        Group & Parameter & Value \\
+        \midrule
+        Dataset & Array & $3\times3$ \\
+        & Image size & $28\times28$ px \\
+        & Site spacing & \SI{7}{px} \\
+        & Images per dataset & 6002 \\
+        & Exposure times & 20, \SIrange{10}{100}{\milli\second}, logarithmic \\
+        & Crop size & $10\times10$ px \\
+        & Split (train / val / test) & 60 / 20 / 20\,\% \\
+        & Split seed & 42 \\
+        \midrule
+        Experiment & Fill rate & 0.5 \\
+        & Survival probability & 1.0 \\
+        & Atomic species & cesium \\
+        & Imaging wavelength & \SI{0.8523}{\micro\metre} \\
+        & Scattering rate & \SI{20000}{\per\second} \\
+        & Stray light rate & \SI{0.3}{\per\second} \\
+        & Light source standard deviation & 1.0 \\
+        \midrule
+        Camera (CMOS) & Quantum efficiency & 0.5 \\
+        & Numerical aperture & 0.65 \\
+        & Physical pixel size & \SI{4.6}{\micro\metre} \\
+        & Magnification & 6.44 \\
+        & Binning & 1 \\
+        & Bias clamp & 200 \\
+        & Bias standard deviation & 0.5 \\
+        & Row noise standard deviation & 0.05 \\
+        & Column noise scale & 0.05 \\
+        & Flicker noise scale & 0.02 \\
+        & Preamplifier gain & 0.11 \\
+        & Readout standard deviation & 4 \\
+        \bottomrule
+    \end{tabular}
+\end{table}

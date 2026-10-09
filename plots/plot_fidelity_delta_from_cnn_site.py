@@ -11,40 +11,27 @@ for path in (project_root, plots_dir):
 import joblib
 import matplotlib.pyplot as plt
 
+import constants
 from plot_fidelity_vs_exposure import (
-    architecture_model_dirs,
+    assign_model_colors,
     collect_records,
-    default_data_dir,
-    default_model_dir,
-    default_output_dir,
     display_method_label,
-    only_4_8_16,
 )
 
 
-baseline_method = "cnn_site"
-base_target_methods = (
-    "lightweight_cnn_site",
-    "lightweight_cnn_site_neighbor",
-    "lightweight_cnn_site_neighbor_weighted",
-    "lightweight_cnn_site_features",
-)
-target_methods = base_target_methods + tuple(
-    f"{method}{suffix}"
-    for suffix in architecture_model_dirs.values()
-    for method in base_target_methods
-)
+baseline_method = constants.plot_baseline_method
+target_methods = constants.plot_target_methods
 
 selected_exposures = None
-model_dirs = (default_model_dir,)
-data_dir = default_data_dir
-output_dir = default_output_dir
+model_dirs = constants.plot_model_dirs
+data_dir = constants.plot_default_data_dir
+output_dir = constants.plot_default_output_dir
 plot_path = output_dir / "fidelity_delta_from_cnn_site.png"
 csv_path = output_dir / "fidelity_delta_from_cnn_site.csv"
 
-figsize = (8.8, 5.4)
-dpi = 200
-y_axis_limits = [-1, 1]
+figsize = constants.plot_delta_figsize
+dpi = constants.plot_delta_dpi
+y_axis_limits = constants.plot_delta_y_axis_limits
 show = False
 
 
@@ -54,13 +41,6 @@ def select_records(records):
         for record in records
         if record["method"] in {baseline_method, *target_methods}
     ]
-    if only_4_8_16:
-        architecture_suffixes = tuple(architecture_model_dirs.values())
-        records = [
-            record for record in records
-            if not record["method"].startswith("lightweight_cnn_site")
-            or record["method"].endswith(architecture_suffixes)
-        ]
     return records
 
 
@@ -131,6 +111,7 @@ def save_delta_csv(rows, path):
 def plot_delta_rows(rows, path, legend_note):
     fig, ax = plt.subplots(figsize=figsize)
     ax.axhline(0.0, color="black", linewidth=1)
+    colors = assign_model_colors({row["method"] for row in rows})
 
     for method in target_methods:
         method_rows = sorted(
@@ -145,12 +126,13 @@ def plot_delta_rows(rows, path, legend_note):
             [row["delta_fidelity_pp"] for row in method_rows],
             marker="o",
             linewidth=2,
+            color=colors[method],
             label=display_method_label(method),
         )
 
     ax.set_xlabel("Exposure time (ms)")
     ax.set_ylabel("Δ Fidelity (p.p.)")
-    ax.set_title("Fidelity Difference from CNN Site")
+    # ax.set_title("Fidelity Difference from CNN Site")
     if y_axis_limits is not None:
         ax.set_ylim(y_axis_limits)
     ax.grid(True, alpha=0.3)

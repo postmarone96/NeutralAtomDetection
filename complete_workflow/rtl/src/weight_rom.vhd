@@ -1,50 +1,39 @@
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
-use std.textio.all;
+
+use work.helpers_pkg.all;
 
 entity weight_rom is
-    generic(
-        WEIGHT_ROM_DEPTH: integer;
-        WEIGHT_ROM_BITS: integer
+    generic (
+        ROM_DEPTH   : positive;
+        WORD_LENGTH : positive;
+        FILE_NAME   : string
     );
-    port(
-        clk:        in std_logic;
-        addr:       in integer range 0 to WEIGHT_ROM_DEPTH - 1;
-        data_out:   out signed(WEIGHT_ROM_BITS - 1 downto 0)
+    port (
+        clk         : in std_logic;
+        read_enable : in std_logic;
+        addr        : in integer range 0 to ROM_DEPTH - 1;
+
+        read_valid  : out std_logic := '0';
+        data_out    : out signed(WORD_LENGTH - 1 downto 0)
     );
 end entity;
 
 architecture rtl of weight_rom is
-    -- init ROM type 
-    type rom_type is array(0 to WEIGHT_ROM_DEPTH - 1) of signed(WEIGHT_ROM_BITS - 1 downto 0);
+    attribute rom_style : string;
 
-    -- funciton to read from mem file
-    impure function init_rom_from_file(file_name: string) return rom_type is
-        file mem_file       : text open read_mode is file_name;
-        variable mem_line   : line;
-        variable temp_word  : signed(WEIGHT_ROM_BITS - 1 downto 0);
-        variable temp_rom   : rom_type := (others => (others => '0'));
-    begin
-        for i in rom_type'range loop
-            if not endfile(mem_file) then
-                readline(mem_file, mem_line);
-                hread(mem_line, temp_word);
-                temp_mem(i) := temp_word;
-            else
-                exit;
-            end if;
-        end loop;
-        return temp_mem;
-    end function;
-
-    -- ROM instance
-    signal rom_block: rom_type := init_rom_from_file("weights.mem");
+    signal rom_block : signed_vector(0 to ROM_DEPTH - 1)(WORD_LENGTH - 1 downto 0)
+                     := init_signed_rom_from_file(FILE_NAME, ROM_DEPTH, WORD_LENGTH);
+    attribute rom_style of rom_block : signal is "block";
 begin
-    process(clk)
+    process (clk)
     begin
-        if rising_edge(clk) then 
-            data_out <= rom_block(addr);
+        if rising_edge(clk) then
+            read_valid <= read_enable;
+            if read_enable = '1' then
+                data_out <= rom_block(addr);
+            end if;
         end if;
     end process;
 end architecture;

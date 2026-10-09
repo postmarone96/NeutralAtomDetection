@@ -14,6 +14,7 @@ from sklearn.mixture import GaussianMixture
 from tqdm.auto import tqdm
 
 from baselines import circular_gaussian
+import constants
 
 
 real_data_dir = Path(__file__).resolve().parent
@@ -36,14 +37,14 @@ site_diagnostic_path = labeling_job["site_diagnostic_path"]
 external_sites_path = labeling_job.get("external_sites_path")
 site_source = labeling_job.get("site_source", "average_image_peak_fit")
 
-input_image_key = "image_2"
-label_image_key = "image_1"
+input_image_key = constants.experimental_input_image_key
+label_image_key = constants.experimental_label_image_key
 
 average_batch_size = 64
 score_batch_size = 32
 fit_size = 17
-peak_min_distance = 18
-peak_smooth_sigma = 2.0
+peak_min_distance = constants.labeling_peak_min_distance
+peak_smooth_sigma = constants.labeling_peak_smooth_sigma
 site_peak_gmm_components = 2
 site_peak_component = "bright"
 row_cluster_gap_factor = 0.55
@@ -433,7 +434,7 @@ def fit_two_gaussian_threshold(values):
     c = (
         m1 ** 2 / (2.0 * s1 ** 2)
         - m0 ** 2 / (2.0 * s0 ** 2)
-        + np.log((w1 * s0) / (w0 * s1))
+        + np.log((w0 * s1) / (w1 * s0))
     )
 
     if abs(a) < 1e-12:

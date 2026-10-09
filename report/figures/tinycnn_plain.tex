@@ -1,0 +1,21 @@
+\begin{tikzpicture}[x=1cm, y=1cm]
+    \fmap{0}{0.2}{1.6}{cInput}{in}{Crop}{$1{\times}10{\times}10$}{-1.5}
+    \fmap{1.55}{0.4}{1.6}{cConv}{c1}{Conv $3{\times}3$, 4\\ReLU}{$4{\times}10{\times}10$}{-1.5}
+    \fmap{3.1}{0.4}{0.85}{cPool}{p1}{Max pool $2{\times}2$}{$4{\times}5{\times}5$}{-1.5}
+    \fmap{4.65}{0.57}{0.85}{cConv}{c2}{Conv $3{\times}3$, 8\\ReLU}{$8{\times}5{\times}5$}{-1.5}
+    \fmap{6.2}{0.57}{0.4}{cPool}{p2}{Max pool $2{\times}2$}{$8{\times}2{\times}2$}{-1.5}
+    \fmap{7.75}{0.8}{0.4}{cConv}{c3}{Conv $3{\times}3$, 16\\ReLU}{$16{\times}2{\times}2$}{-1.5}
+    \fcbar{9.3}{64}{cFc}{fl}{Flatten}{64}{-1.5}
+    \fcbar{10.85}{16}{cFc}{f1}{FC\\ReLU}{16}{-1.5}
+    \fcbar{12.4}{8}{cFc}{f2}{FC\\ReLU}{8}{-1.5}
+    \fcbar{13.95}{2}{cFc}{f3}{FC}{2 logits}{-1.5}
+    \draw[flow] (in-r) -- (c1-l);
+    \draw[flow] (c1-r) -- (p1-l);
+    \draw[flow] (p1-r) -- (c2-l);
+    \draw[flow] (c2-r) -- (p2-l);
+    \draw[flow] (p2-r) -- (c3-l);
+    \draw[flow] (c3-r) -- (fl-l);
+    \draw[flow] (fl-r) -- (f1-l);
+    \draw[flow] (f1-r) -- (f2-l);
+    \draw[flow] (f2-r) -- (f3-l);
+\end{tikzpicture}

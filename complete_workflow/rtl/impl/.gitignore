@@ -1,0 +1,4 @@
+# Generated build directories; scripts and documentation remain versioned.
+/*/
+/*.zip
+/*.tar.gz

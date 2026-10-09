@@ -1,0 +1,6 @@
+__pycache__/
+/legacy_neighbor/
+sim/*/sim_build/
+impl/*/
+!impl/*.sh
+!impl/*.tcl

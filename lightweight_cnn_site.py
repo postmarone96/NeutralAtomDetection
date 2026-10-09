@@ -17,6 +17,7 @@ from cnn_site import (
 )
 from mf_site import classification_fidelity
 from utils import exposure_s, make_random_split, path_from_root
+import constants
 
 
 project_root = Path(__file__).resolve().parent
@@ -24,43 +25,36 @@ default_data_dir = project_root / "dataset_3x3"
 default_model_dir = project_root / "models_3x3"
 default_output_dir = project_root / "output_3x3"
 
-lightweight_cnn_site_method = "lightweight_cnn_site"
-lightweight_cnn_site_neighbor_method = "lightweight_cnn_site_neighbor"
-lightweight_cnn_site_neighbor_weighted_method = "lightweight_cnn_site_neighbor_weighted"
-lightweight_cnn_site_features_method = "lightweight_cnn_site_features"
+lightweight_cnn_site_method = constants.tinycnn_method
+lightweight_cnn_site_neighbor_method = constants.tinycnn_neighbor_method
+lightweight_cnn_site_neighbor_gaussian_method = constants.tinycnn_neighbor_gaussian_method
 
 selected_methods = (
-    # lightweight_cnn_site_method,
-    # lightweight_cnn_site_neighbor_method,
-    lightweight_cnn_site_neighbor_weighted_method,
+    lightweight_cnn_site_method,
+    lightweight_cnn_site_neighbor_method,
+    lightweight_cnn_site_neighbor_gaussian_method,
 )
 
 crop_size = 10
-channels = (8, 16, 32)
-learning_rate = 1e-4
-epochs = 300
-early_stopping_patience = 20
-early_stopping_min_delta = 1e-5
-batch_size = 64
-eval_batch_size = 2048
+channels = constants.tinycnn_channels
+learning_rate = constants.tinycnn_learning_rate
+epochs = constants.tinycnn_epochs
+early_stopping_patience = constants.tinycnn_early_stopping_patience
+early_stopping_min_delta = constants.tinycnn_early_stopping_min_delta
+batch_size = constants.tinycnn_batch_size
+eval_batch_size = constants.tinycnn_eval_batch_size
 num_workers = 10
 base_seed = 42
-device = "cuda:0"
+device = "cuda:1"
 site_crop_cache_batch_size = 512
 resume = False
 selected_exposures = None
-batch_norm = False
-    # [0.01, 0.014, 0.018, 0.021, 0.026, 0.034, 0.038, 0.043]
-# [0.01 , 0.011, 0.013, 0.014, 0.016, 0.018, 0.021, 0.023, 0.026,
-#        0.03 , 0.034, 0.038, 0.043, 0.048, 0.055, 0.062, 0.07 , 0.078,
-#        0.089, 0.1  ]
-neighbor_directions = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]
-neighbor_feature_count = len(neighbor_directions)
+neighbor_directions = constants.tinycnn_neighbor_directions
+neighbor_feature_count = constants.tinycnn_neighbor_feature_count
 neighbor_feature_methods = (
     lightweight_cnn_site_neighbor_method,
-    lightweight_cnn_site_neighbor_weighted_method,
+    lightweight_cnn_site_neighbor_gaussian_method,
 )
-features_per_neighbor = 2
 min_grid_fill = 0.5
 
 
@@ -73,7 +67,6 @@ class LightweightCnnSiteNet(nn.Module):
         neighbor_sigma_px=None,
         neighbor_feature_scale=None,
         neighbor_noise_floor=None,
-        batch_norm=False,
         channels=channels,
     ):
         super().__init__()
@@ -83,33 +76,17 @@ class LightweightCnnSiteNet(nn.Module):
             neighbor_feature_count if method in neighbor_feature_methods else 0
         )
 
-        if batch_norm:
-            self.features = nn.Sequential(
-                nn.Conv2d(1, c1, kernel_size=3, padding=1),
-                nn.BatchNorm2d(c1),
-                nn.ReLU(),
-                nn.MaxPool2d(kernel_size=2),
-                nn.Conv2d(c1, c2, kernel_size=3, padding=1),
-                nn.BatchNorm2d(c2),
-                nn.ReLU(),
-                nn.MaxPool2d(kernel_size=2),
-                nn.Conv2d(c2, c3, kernel_size=3, padding=1),
-                nn.BatchNorm2d(c3),
-                nn.ReLU(),
-                nn.Flatten(),
-            )
-        else:
-            self.features = nn.Sequential(
-                nn.Conv2d(1, c1, kernel_size=3, padding=1),
-                nn.ReLU(),
-                nn.MaxPool2d(kernel_size=2),
-                nn.Conv2d(c1, c2, kernel_size=3, padding=1),
-                nn.ReLU(),
-                nn.MaxPool2d(kernel_size=2),
-                nn.Conv2d(c2, c3, kernel_size=3, padding=1),
-                nn.ReLU(),
-                nn.Flatten(),
-            )
+        self.features = nn.Sequential(
+            nn.Conv2d(1, c1, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2),
+            nn.Conv2d(c1, c2, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2),
+            nn.Conv2d(c2, c3, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Flatten(),
+        )
 
         conv_features = c3 * (crop_size // 4) ** 2
         if self.neighbor_feature_count:
@@ -129,7 +106,7 @@ class LightweightCnnSiteNet(nn.Module):
                 nn.Linear(8, 2),
             )
 
-        if method == lightweight_cnn_site_neighbor_weighted_method:
+        if method == lightweight_cnn_site_neighbor_gaussian_method:
             if neighbor_sigma_px is None:
                 raise ValueError("neighbor_sigma_px is None")
             self.register_buffer(
@@ -218,26 +195,30 @@ def neighbor_table(sites):
     return indices, distances
 
 
-def neighbor_weights(distances, method, sigma_px=None):
+def crop_values(crops, method, sigma_px=None):
     if method == lightweight_cnn_site_neighbor_method:
-        return torch.ones_like(distances)
+        return crops.mean(dim=(2, 3, 4))
 
-    if method == lightweight_cnn_site_neighbor_weighted_method:
-        squared = (distances / float(sigma_px)) ** 2
-        return (1.0 + squared.min(dim=-1, keepdim=True).values) / (1.0 + squared)
+    if method == lightweight_cnn_site_neighbor_gaussian_method:
+        size = crops.shape[-1]
+        axis = torch.arange(size, dtype=crops.dtype, device=crops.device) - size // 2
+        kernel = torch.exp(
+            -(axis[:, None] ** 2 + axis[None, :] ** 2) / (2.0 * float(sigma_px) ** 2)
+        )
+        return (crops * (kernel / kernel.sum())).sum(dim=(2, 3, 4))
 
     raise ValueError(f"{method} has no neighbour features")
 
 
 def neighbor_features_from_crops(crops, sites, method, noise_floor, feature_scale, sigma_px=None):
-    """Grid-neighbour crop means, weighted and divided by `feature_scale`.
+    """Grid-neighbour crop values divided by `feature_scale`.
 
     Neighbours outside the grid read `noise_floor`.
     """
     batch, n_sites = crops.shape[:2]
     site_values = torch.cat(
         [
-            crops.mean(dim=(2, 3, 4)),
+            crop_values(crops, method, sigma_px),
             torch.full(
                 (batch, 1), float(noise_floor), dtype=crops.dtype, device=crops.device
             ),
@@ -250,59 +231,12 @@ def neighbor_features_from_crops(crops, sites, method, noise_floor, feature_scal
     )
     tables = [neighbor_table(grid.numpy()) for grid in grids]
     indices = torch.from_numpy(np.stack([table[0] for table in tables]))[image_grid]
-    distances = torch.from_numpy(np.stack([table[1] for table in tables]))[image_grid]
     indices = torch.where(indices < 0, n_sites, indices).to(crops.device)
 
     features = torch.gather(
         site_values, dim=1, index=indices.reshape(batch, -1)
     ).reshape(batch, n_sites, neighbor_feature_count)
-    weights = neighbor_weights(distances, method=method, sigma_px=sigma_px)
-    features = features * weights.to(device=crops.device, dtype=crops.dtype)[:, None, :]
     return features / float(feature_scale)
-
-
-class LightweightCnnSiteFeaturesNet(LightweightCnnSiteNet):
-    """Every site reads a learned summary of each grid neighbour's own features.
-
-    The summary is computed once per site and fanned out, so a neighbour value
-    is an activation of this network rather than an input to it.
-    """
-
-    def __init__(self, crop_size, neighbor_indices, batch_norm=False):
-        super().__init__(
-            crop_size=crop_size,
-            method=lightweight_cnn_site_method,
-            batch_norm=batch_norm,
-        )
-        self.method = lightweight_cnn_site_features_method
-        self.register_buffer("neighbor_indices", neighbor_indices)
-        self.n_sites = neighbor_indices.shape[0]
-        self.summary = nn.Linear(16, features_per_neighbor)
-        self.missing = nn.Parameter(torch.zeros(features_per_neighbor))
-        self.classifier[2] = nn.Linear(
-            16 + features_per_neighbor * neighbor_indices.shape[1], 8
-        )
-
-    def forward(self, x, neighbor_features=None):
-        hidden = self.classifier[1](self.classifier[0](self.features(x)))
-        images = hidden.shape[0] // self.n_sites
-        summary = self.summary(hidden).reshape(images, self.n_sites, features_per_neighbor)
-        padded = torch.cat(
-            [summary, self.missing.expand(images, 1, features_per_neighbor)], dim=1
-        )
-        neighbors = padded[:, self.neighbor_indices].reshape(hidden.shape[0], -1)
-        hidden = self.classifier[3](
-            self.classifier[2](torch.cat([hidden, neighbors], dim=1))
-        )
-        return self.classifier[4](hidden)
-
-
-def site_neighbor_indices(h5_path):
-    """Grid neighbours as the gather wants them: a missing slot reads the last row."""
-    with h5py.File(h5_path, "r") as h5_file:
-        sites = h5_file["sites"][:].astype(np.float64)
-    indices, _distances = neighbor_table(sites)
-    return torch.from_numpy(np.where(indices < 0, len(sites), indices))
 
 
 def prepare_site_batch(batch, model, device):
@@ -350,13 +284,13 @@ def fit_neighbor_feature_scale(dataloader, method, noise_floor, sigma_px=None, m
     return largest
 
 @torch.no_grad()
-def fit_neighbor_noise_floor(dataloader):
+def fit_neighbor_noise_floor(dataloader, method, sigma_px=None):
     """Mean crop value of the empty sites in `dataloader`."""
     total = 0.0
     count = 0
     for crops, labels, *_ in dataloader:
         empty = labels == 0
-        total += float(crops.mean(dim=(2, 3, 4))[empty].double().sum())
+        total += float(crop_values(crops, method, sigma_px)[empty].double().sum())
         count += int(empty.sum())
     return total / count
 
@@ -371,23 +305,14 @@ def fit_neighbor_sigma_px(h5_path, train_idx, num_workers=4):
 
 
 def load_lightweight_cnn_site_model(best, device="cpu"):
-    batch_norm = any(key.endswith("running_mean") for key in best["state_dict"])
-    if best["method"] == lightweight_cnn_site_features_method:
-        model = LightweightCnnSiteFeaturesNet(
-            crop_size=best["crop_size"],
-            neighbor_indices=best["state_dict"]["neighbor_indices"],
-            batch_norm=batch_norm,
-        ).to(device)
-    else:
-        model = LightweightCnnSiteNet(
-            crop_size=best["crop_size"],
-            method=best["method"],
-            neighbor_sigma_px=best.get("neighbor_sigma_px"),
-            neighbor_feature_scale=best.get("neighbor_feature_scale"),
-            neighbor_noise_floor=best.get("neighbor_noise_floor"),
-            batch_norm=batch_norm,
-            channels=best.get("channels", channels),
-        ).to(device)
+    model = LightweightCnnSiteNet(
+        crop_size=best["crop_size"],
+        method=best["method"],
+        neighbor_sigma_px=best.get("neighbor_sigma_px"),
+        neighbor_feature_scale=best.get("neighbor_feature_scale"),
+        neighbor_noise_floor=best.get("neighbor_noise_floor"),
+        channels=best.get("channels", channels),
+    ).to(device)
     model.load_state_dict(best["state_dict"])
     model.eval()
     return model
@@ -474,7 +399,6 @@ def train_lightweight_cnn_site(
     early_stopping_min_delta=early_stopping_min_delta,
     crop_cache_path=None,
     neighbor_sigma_px=None,
-    batch_norm=batch_norm,
     channels=channels,
 ):
     uses_neighbors = method in neighbor_feature_methods
@@ -497,7 +421,9 @@ def train_lightweight_cnn_site(
     neighbor_feature_scale = None
     if uses_neighbors:
         fit_loader = make_site_loader(indices=train_idx, shuffle=False, **loader_options)
-        neighbor_noise_floor = fit_neighbor_noise_floor(fit_loader)
+        neighbor_noise_floor = fit_neighbor_noise_floor(
+            fit_loader, method=method, sigma_px=neighbor_sigma_px
+        )
         neighbor_feature_scale = fit_neighbor_feature_scale(
             fit_loader,
             method=method,
@@ -505,22 +431,14 @@ def train_lightweight_cnn_site(
             sigma_px=neighbor_sigma_px,
         )
 
-    if method == lightweight_cnn_site_features_method:
-        model = LightweightCnnSiteFeaturesNet(
-            crop_size=crop_size,
-            neighbor_indices=site_neighbor_indices(h5_path),
-            batch_norm=batch_norm,
-        ).to(device)
-    else:
-        model = LightweightCnnSiteNet(
-            crop_size=crop_size,
-            method=method,
-            neighbor_sigma_px=neighbor_sigma_px,
-            neighbor_feature_scale=neighbor_feature_scale,
-            neighbor_noise_floor=neighbor_noise_floor,
-            batch_norm=batch_norm,
-            channels=channels,
-        ).to(device)
+    model = LightweightCnnSiteNet(
+        crop_size=crop_size,
+        method=method,
+        neighbor_sigma_px=neighbor_sigma_px,
+        neighbor_feature_scale=neighbor_feature_scale,
+        neighbor_noise_floor=neighbor_noise_floor,
+        channels=channels,
+    ).to(device)
 
     loss_fn = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -647,7 +565,6 @@ def run_one_split(
     early_stopping_min_delta,
     method=lightweight_cnn_site_method,
     crop_cache_path=None,
-    batch_norm=batch_norm,
     channels=channels,
 ):
     with h5py.File(h5_path, "r") as h5_file:
@@ -662,7 +579,7 @@ def run_one_split(
     mean_image, scale = compute_cnn_preprocessing(h5_path, train_idx)
 
     neighbor_sigma_px = None
-    if method == lightweight_cnn_site_neighbor_weighted_method:
+    if method == lightweight_cnn_site_neighbor_gaussian_method:
         neighbor_sigma_px = fit_neighbor_sigma_px(
             h5_path=h5_path,
             train_idx=train_idx,
@@ -686,7 +603,6 @@ def run_one_split(
         early_stopping_min_delta=early_stopping_min_delta,
         crop_cache_path=crop_cache_path,
         neighbor_sigma_px=neighbor_sigma_px,
-        batch_norm=batch_norm,
         channels=channels,
     )
 
@@ -745,7 +661,6 @@ def main(
     site_crop_cache_batch_size=site_crop_cache_batch_size,
     selected_exposures=selected_exposures,
     resume=resume,
-    batch_norm=batch_norm,
     channels=channels,
 ):
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -774,7 +689,6 @@ def main(
     print(f"  methods:              {len(selected_methods)}")
     print(f"  crop size:            {crop_size}x{crop_size}")
     print(f"  device:               {device}")
-    print(f"  batch norm:           {batch_norm}")
     print("Methods:")
     for method in selected_methods:
         print(f"  {method}")
@@ -814,7 +728,6 @@ def main(
                 early_stopping_min_delta=early_stopping_min_delta,
                 method=method,
                 crop_cache_path=crop_cache_path,
-                batch_norm=batch_norm,
                 channels=channels,
             )
             trained = result.pop("trained_model")

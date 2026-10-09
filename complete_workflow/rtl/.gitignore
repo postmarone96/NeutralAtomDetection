@@ -1,0 +1,14 @@
+__pycache__/
+.pytest_cache/
+.DS_Store
+/docs/
+sim/**/sim_build/
+xrt/sim/sim_build/
+xrt/sim/full_sim_build/
+xrt/build/
+.Xil/
+.ipcache/
+*.jou
+*.ghw
+*.o
+*-obj08.cf

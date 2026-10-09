@@ -1,0 +1,54 @@
+\section{Post-Training Quantization}\label{sec:quant}
+
+The trained network undergoes post-training quantization through a three-step process. First, the network tensors are profiled to determine their ranges. Second, sensitivity analysis assesses the extent to which each network layer can be narrowed. Third, width optimization identifies the most cost-effective set of widths for all components collectively. The quantized network is subsequently executed as an integer model in NumPy, and its outputs are compared with those of the float32 network on the test images. Following the methodology of Su et al.~\cite{su2026}, who report classification accuracy within \SI{0.05}{\percent} of the floating-point model, the objective is to achieve a difference in infidelity of no more than \SI{0.05}{p.p.} relative to the float32 model.
+
+\subsection{Profiling} The float32 network is run on the validation images, and the value range of each tensor is recorded. This includes weights, biases, layer outputs, and inputs.
+Each tensor is assigned a fixed-point format characterized by $W$ total bits, where $I$ bits represent the integer portion, including the sign. Values are rounded to the nearest representable number and saturate at the format limits.
+The integer bits $I$ and fractional bits $F$ for each tensor follow the rules in \cref{tab:profile-rules}, with $W = I + F$.
+
+
+\begin{table}[H]
+  \centering
+  \caption{Profiling rules of each tensor.}
+  \label{tab:profile-rules}
+  \begin{tabular}{@{}lll@{}}
+    \toprule
+    Tensor & Integer bits $I$ & Fractional bits $F$ \\
+        \midrule
+            Weights & $I = \lfloor\log_2 \max|x|\rfloor + 2$ & $F_w = W_w - I_w$, with $W_w \le 18$ \\
+            Inputs and layer outputs & $I = \lfloor \log_2 \max(|x_{0.1}|,\,|x_{99.9}|) \rfloor + 2$ & $F_a = W_a - I_a$, with $W_a \le 27$ \\
+            Accumulators & $\lfloor \log_2 \sum_i |w_{c,i}| \rfloor + I_{\mathrm{in}} + 1$ & $F_{\mathrm{acc}} = F_w + F_{\mathrm{in}}$ \\
+            Biases & $I = \lfloor\log_2 \max|x|\rfloor + 2$ & $F_{\mathrm{bias}} = F_{\mathrm{acc}}$ \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+
+For inputs and layer outputs, $x_{99.9}$ and $x_{0.1}$ denote the 99.9th and 0.1th percentiles of the tensor.
+For weights and activations, $W_w$ and $W_a$ represent their respective total bit widths, and $I_w$ and $I_a$ their respective integer bits.
+For accumulators, $c$ refers to the output channel with the largest sum of absolute weights $w_{c,i}$, while $I_{\mathrm{in}}$ and $F_{\mathrm{in}}$ represent the integer and fractional bits of the layer input, respectively. The 18- and 27-bit limits correspond to the operand widths of the multiplier in a DSP48E2 block of the Alveo U55C. In the following steps, the ratio is preserved such that $W_a = \mathrm{round}(27/18\,W_w)$.
+This profile is intentionally broad and serves as the initial configuration for the following sensitivity analysis.
+
+\subsection{Sensitivity} To determine the minimum feasible width for each network component, the network is partitioned into six blocks: the input with the first convolution, the second convolution, the third convolution, the first fully connected layer, the neighbor values with the second fully connected layer, and the output layer. Each convolution block includes its activation and, where applicable, its pooling. The weight width $W_w$ of one block at a time is swept from 2 to 20 bits, while the remaining blocks keep their profiled widths. The integer bits $I_w$ remain at their profiled values, resulting in changes only to the fractional bits $F_w = W_w - I_w$. In the block under evaluation, the activation width is set according to $W_a = \mathrm{round}(27/18\,W_w)$, with fixed integer bits $I_a$ and $F_a = W_a - I_a$. Accumulators and biases are configured according to the rules in \cref{tab:profile-rules}. Each configuration is evaluated by running the integer model on the complete test set. The primary metric is the change in infidelity relative to the float32 network, $\Delta\mathrm{Infidelity} = (1 - \mathcal{F}_{\mathrm{fixed}}) - (1 - \mathcal{F}_{\mathrm{float}})$, expressed in percentage points, where $\mathcal{F}$ is defined in \cref{eq:fidelity}.
+
+\subsection{Width optimization} Width optimization aims to identify the lowest-cost weight widths $W_w$ for all six blocks simultaneously, ensuring that $|\Delta\mathrm{Infidelity}| \le 0.05$ percentage points. This threshold corresponds to approximately five decisions out of the 10\,809 in the simulated test set. Activation widths are determined by $W_a = \mathrm{round}(27/18\,W_w)$. The cost metric serves as a proxy for multiplier area and is calculated as the sum of the number of multiplications across all blocks, multiplied by $W_w$ and $W_a$. The search begins at the narrowest width for each block that individually satisfies the sensitivity analysis band. Because blocks are evaluated independently, their combination often falls outside the acceptable band. During the repair phase, the block with the highest sensitivity at its current width is incrementally widened by one bit until the combined configuration meets the band criterion. In the descent phase, one bit is removed from the block where this change saves the most cost. The first reduction that maintains the configuration within the band is accepted, and this process is repeated until no further single-bit reductions are feasible. This approach yields a local minimum with respect to single-bit adjustments. The weight width is capped at 18 bits, all evaluated combinations are cached, and the total number of evaluations is limited to 150. The optimization hyperparameters are detailed in Appendix~\ref{app:optimizer}.
+
+With the widths in \cref{tab:widths}, the quantized network is run once more as an integer model on the test set. The difference in infidelity to the float32 network is \SI{0.04}{p.p.}, which is within the target of \SI{0.05}{p.p.} and corresponds to about four decisions of the 10\,809. The integer model also serves as the bit-accurate reference for the hardware. The widths are therefore fixed, and the network is implemented in hardware, as described in \cref{sec:fpga}.
+
+\begin{table}[H]
+    \centering
+    \caption{Optimization results for the TinyCNN with neighbors at \SI{10}{\milli\second} on the simulated data.}
+    \label{tab:widths}
+    \begin{tabular}{@{}lcccccc@{}}
+        \toprule
+        Block & $W_w$ & $I_w$ & $W_a$ & $I_a$ & $W_{\mathrm{acc}}$ & $I_{\mathrm{acc}}$ \\
+        \midrule
+        Input and first convolution & 5 & 1 & 8 & 1 & 14 & 3 \\
+        Second convolution & 6 & 2 & 9 & 2 & 16 & 5 \\
+        Third convolution & 4 & 1 & 6 & 3 & 17 & 7 \\
+        First fully connected layer & 6 & 2 & 9 & 5 & 15 & 8 \\
+        Neighbors and second fully connected layer & 6 & 1 & 9 & 5 & 16 & 7 \\
+        Output layer & 5 & 1 & 8 & 5 & 15 & 7 \\
+        \bottomrule
+    \end{tabular}
+\end{table}

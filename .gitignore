@@ -8,3 +8,7 @@
 /output/
 /output_3x3/
 /dataset_3x3/
+
+# Keep one public guide; other Markdown files are local notes.
+*.md
+!/README.md

@@ -1,0 +1,2 @@
+setup_slack_ns=0.003
+hold_slack_ns=0.009

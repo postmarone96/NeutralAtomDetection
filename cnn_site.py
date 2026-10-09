@@ -10,6 +10,7 @@ from tqdm.auto import tqdm
 
 from mf_site import classification_fidelity
 from utils import H5Dataset, extract_patches, get_device, make_random_split, path_from_root
+import constants
 
 
 # default_data_dir = Path(
@@ -18,7 +19,7 @@ from utils import H5Dataset, extract_patches, get_device, make_random_split, pat
 # default_model_dir = Path("models_3x3")
 default_data_dir = Path("spacing_datasets_3x3_")
 default_model_dir = Path("spacing_models_3x3_")
-cnn_site_decision_threshold = 0.5
+cnn_site_decision_threshold = constants.cnn_site_decision_threshold
 crop_size = 10
 learning_rate = 1e-4
 epochs = 80
@@ -28,7 +29,7 @@ batch_size = 64
 eval_batch_size = 2048
 num_workers = 2
 base_seed = 42
-device = "cuda"
+device = "cuda:0"
 site_crop_cache_version = 1
 
 

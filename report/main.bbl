@@ -1,0 +1,56 @@
+\begin{thebibliography}{10}
+
+\bibitem{winklmann2023}
+J.~Winklmann, D.~Tsevas, and M.~Schulz, ``Realistic neutral atom image
+  simulation,'' in {\em IEEE International Conference on Quantum Computing and
+  Engineering (QCE)}, 2023.
+
+\bibitem{su2026}
+X.~Su, M.~Liang, T.~Zhang, Z.~Zhao, P.~Yin, Y.~Yang, W.~Dai, X.~Luo, X.~Li, and
+  L.~You, ``Field-programmable gate array--accelerated exposure-aware
+  convolutional neural network for fluorescence-based qubit readout,'' {\em
+  Physical Review Applied}, vol.~25, no.~5, p.~054004, 2026.
+
+\bibitem{mude2025}
+C.~N. Mude, L.~Phuttitarn, S.~Maurya, K.~Sinha, M.~Saffman, and S.~Tannu,
+  ``Enabling fast and accurate neutral atom readout through image denoising,''
+  2025.
+
+\bibitem{impertro2023}
+A.~Impertro, J.~F. Wienand, S.~H{\"a}fele, H.~von Raven, S.~Hubele,
+  T.~Klostermann, C.~R. Cabrera, I.~Bloch, and M.~Aidelsburger, ``An
+  unsupervised deep learning algorithm for single-site reconstruction in
+  quantum gas microscopes,'' {\em Communications Physics}, vol.~6, p.~166,
+  2023.
+
+\bibitem{phuttitarn2023}
+L.~Phuttitarn, B.~M. Becker, R.~Chinnarasu, T.~M. Graham, and M.~Saffman,
+  ``Enhanced measurement of neutral atom qubits with machine learning,'' 2023.
+
+\bibitem{kent2025}
+R.~M. Kent, L.~Phuttitarn, C.~N. Mude, S.~Tannu, M.~Saffman, G.~Lafyatis, and
+  D.~J. Gauthier, ``Efficient measurement of neutral-atom qubits with matched
+  filters,'' 2025.
+
+\bibitem{wei2023}
+D.~Wei, {\em Microscopy of spin hydrodynamics and cooperative light scattering
+  in atomic {H}ubbard systems}.
+\newblock PhD thesis, Ludwig-Maximilians-Universit{\"a}t M{\"u}nchen, 2023.
+
+\bibitem{winklmann2024}
+J.~Winklmann, A.~Alberti, and M.~Schulz, ``Comparison of atom detection
+  algorithms for neutral atom quantum computing,'' in {\em IEEE International
+  Conference on Quantum Computing and Engineering (QCE)}, 2024.
+
+\bibitem{winklmann2026accelerator}
+J.~Winklmann, Y.~Yu, X.~Guo, K.~Staudacher, and M.~Schulz, ``Highly-parallel
+  atom-detection accelerator for tweezer-based neutral atom quantum
+  computers,'' in {\em 63rd ACM/IEEE Design Automation Conference (DAC)}, 2026.
+
+\bibitem{amd2026u55c}
+{Advanced Micro Devices, Inc.}, ``{AMD Alveo U55C} high performance compute
+  card.''
+  \url{https://www.amd.com/en/products/accelerators/alveo/u55c/a-u55c-p00g-pq-g.html}.
+\newblock Accessed: October 8, 2026.
+
+\end{thebibliography}

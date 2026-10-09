@@ -1,0 +1,97 @@
+\documentclass[11pt,a4paper,DIV=12,abstract=true]{scrartcl}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{rotating}
+\usepackage{booktabs}
+\usepackage{siunitx}
+\usepackage{subcaption}
+\usepackage{float}
+\usepackage[hidelinks]{hyperref}
+\usepackage[noabbrev]{cleveref}
+\usepackage{xcolor}
+\input{figures/network_macros}
+
+\graphicspath{{figures/}}
+\setkomafont{disposition}{\bfseries\rmfamily}
+\renewcommand{\arraystretch}{1.15}
+
+\newcommand{\thesistitle}{Real-Time Neutral Atom Detection with Hardware-Friendly CNNs on FPGA}
+\newcommand{\thesisauthor}{Your Name}
+\newcommand{\thesisadvisor}{Advisor Name}
+\newcommand{\thesissupervisor}{Supervisor Name}
+
+\begin{document}
+
+\begin{titlepage}
+\centering
+{\Large Technical University of Munich\par}
+{\large TUM School of Computation, Information and Technology\par}
+\vspace{1cm}
+{\large Guided Research\par}
+\vspace{2.5cm}
+{\LARGE\bfseries \thesistitle\par}
+\vspace{2.5cm}
+{\large \thesisauthor\par}
+\vfill
+\begin{tabular}{ll}
+Advisor: & \thesisadvisor \\
+Supervisor: & \thesissupervisor \\
+Submission date: & \today
+\end{tabular}
+\end{titlepage}
+
+\pagenumbering{roman}
+
+\input{sections/00_abstract}
+
+\tableofcontents
+\clearpage
+
+\listoffigures
+\clearpage
+
+\listoftables
+\clearpage
+
+\input{sections/00_abbreviations}
+\clearpage
+
+\pagenumbering{arabic}
+
+\input{sections/01_introduction}
+\newpage
+\input{sections/02_state_of_the_art}
+\newpage
+\input{sections/03_simulation_baselines}
+\newpage
+\input{sections/04_network_design}
+\newpage
+\input{sections/05_dl_results}
+\newpage
+\input{sections/06_post_training_quantization}
+\newpage
+\input{sections/07_fpga_implementation}
+\newpage
+\input{sections/08_implementation_results}
+\newpage
+\input{sections/09_discussion}
+\newpage
+\bibliographystyle{ieeetr}
+\bibliography{references}
+
+\appendix
+\input{sections/A_simulation_parameters}
+\input{sections/B_training_hyperparameters}
+\input{sections/C_optimizer_hyperparameters}
+\input{sections/D_neighbor_slots}
+\input{sections/E_preprocessing_controller}
+\input{sections/F_site_scheduler}
+\input{sections/G_cnn_controller}
+
+\end{document}

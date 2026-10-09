@@ -9,12 +9,12 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
 
 from cnn_site import (
-    cnn_site_decision_threshold,
     compute_cnn_preprocessing,
     set_random_seed,
 )
 from mf_site import classification_fidelity
 from utils import H5Dataset, get_device, make_random_split, path_from_root
+import constants
 
 
 default_data_dir = Path(
@@ -28,7 +28,7 @@ batch_size = 64
 eval_batch_size = 2048
 num_workers = 2
 base_seed = 42
-device = "cuda"
+device = "cuda:0"
 
 
 def extract_array_crop(image, sites, crop_size):
@@ -406,13 +406,13 @@ def train_cnn_array(
         device=device,
     )
 
-    thresholds = np.full(n_sites, cnn_site_decision_threshold, dtype=np.float32)
+    thresholds = np.full(n_sites, constants.cnn_site_decision_threshold, dtype=np.float32)
     fidelities = np.zeros(n_sites, dtype=np.float32)
     for q in range(n_sites):
         fidelities[q] = classification_fidelity(
             val_scores[:, q],
             val_labels[:, q],
-            cnn_site_decision_threshold,
+            constants.cnn_site_decision_threshold,
         )
 
     return {

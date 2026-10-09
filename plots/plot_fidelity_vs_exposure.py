@@ -18,11 +18,11 @@ from cnn_array import calc_cnn_array_scores
 from cnn_site import calc_cnn_site_scores, make_site_loader
 from lightweight_cnn_site import (
     calc_lightweight_cnn_site_logits_from_site_loader,
-    lightweight_cnn_site_method,
     load_lightweight_cnn_site_model,
 )
 from mf_array import calc_best_scores_array
 from mf_site import calc_best_scores
+import constants
 from utils import (
     H5Dataset,
     exposure_matches,
@@ -33,14 +33,9 @@ from utils import (
 )
 
 
-default_data_dir = project_root / "dataset_3x3"
-default_spacing_data_dir = project_root / "spacing_datasets_3x3"
-default_model_dir = project_root / "models_3x3"
-default_spacing_model_dir = project_root / "spacing_models_3x3"
-architecture_model_dirs = {
-    project_root / "models_3x3_4_8_16": "_4_8_16",
-}
-default_output_dir = project_root / "output_3x3"
+default_data_dir = constants.plot_default_data_dir
+default_model_dir = constants.plot_default_model_dir
+default_output_dir = constants.plot_default_output_dir
 batch_size = 500
 num_workers = 0
 device = "cpu"
@@ -54,12 +49,11 @@ show = True
 print_available_methods = False
 print_record_table = False
 save_selected_records_csv = True
-only_4_8_16 = True
 
 selected_plot_groups = (
     "cnn",
-    "classical",
     "matched_filter",
+    "classical",
     # "array",
     # "all",
 )
@@ -68,14 +62,9 @@ extra_plot_methods = ()
 method_groups = {
     "cnn": (
         "cnn_site",
-    #     "lightweight_cnn_site",
-    #     "lightweight_cnn_site_neighbor",
-    #     "lightweight_cnn_site_neighbor_weighted",
-    ),
-    "classical": (
-        "square",
-        "gaussian",
-        "wei",
+        # "lightweight_cnn_site",
+        # "lightweight_cnn_site_neighbor",
+    #     "lightweight_cnn_site_neighbor_gaussian",
     ),
     "matched_filter": (
         # "mf_site",
@@ -84,6 +73,11 @@ method_groups = {
         "mf_array_10_splits",
         # "mf_array_gaussian",
         # "mf_array_gaussian_10_splits",
+    ),
+    "classical": (
+        "square",
+        "gaussian",
+        "wei",
     ),
     # "array": (
     #     "cnn_array",
@@ -94,11 +88,10 @@ method_groups = {
 method_labels = {
     "square": "Square",
     "gaussian": "Gaussian",
-    "cnn_site": "CNN Site",
-    "lightweight_cnn_site": "TinyCNN Site",
-    "lightweight_cnn_site_neighbor": "TinyCNN Site + 8 Neighbors",
-    "lightweight_cnn_site_neighbor_weighted": "TinyCNN Site + 8 weighted Neighbors",
-    "lightweight_cnn_site_features": "TinyCNN Site + learned neighbors",
+    "cnn_site": "CNN site",
+    "lightweight_cnn_site": "TinyCNN",
+    "lightweight_cnn_site_neighbor": "TinyCNN with neighbors",
+    "lightweight_cnn_site_neighbor_gaussian": "TinyCNN with Gaussian neighbors",
     "cnn_array": "CNN array",
     "mf_site": "MF site",
     "mf_array": "MF array",
@@ -111,9 +104,7 @@ method_labels = {
 def method_family(method):
     if method in {
         "lightweight_cnn_site_neighbor",
-        "lightweight_cnn_site_neighbor_weighted",
-        "lightweight_cnn_site_features",
-        "lightweight_cnn_site_spacing_conditioned",
+        "lightweight_cnn_site_neighbor_gaussian",
     }:
         return "lightweight_cnn_site"
     return fold_splits_method(method)
@@ -124,14 +115,6 @@ def base_method_label(method):
 
 
 def display_method_label(method):
-    for suffix in architecture_model_dirs.values():
-        if method.endswith(suffix):
-            base_label = display_method_label(method[: -len(suffix)])
-            if only_4_8_16:
-                return base_label
-            variant = suffix.strip("_").replace("_", "/")
-            return f"{base_label} {variant}"
-
     if method in method_labels:
         return method_labels[method]
 
@@ -139,6 +122,17 @@ def display_method_label(method):
     label = method_labels.get(normalized, method)
 
     return label
+
+
+def base_model(method):
+    return fold_splits_method(method)
+
+
+def assign_model_colors(methods):
+    models = {method: base_model(method) for method in methods}
+    ranked = sorted(set(models.values()), key=constants.model_priority.index)
+    palette = dict(zip(ranked, constants.model_palette))
+    return {method: palette[model] for method, model in models.items()}
 
 
 def resolve_selected_methods(records):
@@ -154,10 +148,22 @@ def resolve_selected_methods(records):
                 raise KeyError(f"unknown plot method group: {group_name}")
             methods.update(method_groups[group_name])
 
-        for suffix in architecture_model_dirs.values():
-            methods.update(f"{method}{suffix}" for method in set(methods))
-
     return methods
+
+
+def ordered_plot_methods(records):
+    available_methods = {record["method"] for record in records}
+
+    def priority(method):
+        model = base_model(method)
+        try:
+            model_index = constants.model_priority.index(model)
+        except ValueError:
+            model_index = len(constants.model_priority)
+
+        return model_index, method
+
+    return sorted(available_methods, key=priority)
 
 
 def get_test_fidelity(model):
@@ -186,7 +192,6 @@ def get_theoretical_infidelity(model):
 def collect_joblib_records(
     model_dir,
     selected_exposures=None,
-    method_suffix="",
     data_dir=None,
 ):
     records = []
@@ -213,8 +218,6 @@ def collect_joblib_records(
             continue
 
         method = path_method
-        if method_suffix:
-            method = f"{method}{method_suffix}"
 
         mean_fidelity = float(np.mean(fidelity))
         mean_infidelity = float(1.0 - mean_fidelity)
@@ -247,11 +250,8 @@ def collect_joblib_records(
 
 def collect_records(
     model_dirs,
-    spacing_model_dirs=(),
     selected_exposures=None,
     data_dir=None,
-    spacing_data_dir=None,
-    architecture_model_dirs=architecture_model_dirs,
 ):
     records = []
 
@@ -260,26 +260,6 @@ def collect_records(
             collect_joblib_records(
                 Path(model_dir),
                 selected_exposures=selected_exposures,
-                data_dir=data_dir,
-            )
-        )
-
-    for model_dir in spacing_model_dirs:
-        records.extend(
-            collect_joblib_records(
-                Path(model_dir),
-                selected_exposures=selected_exposures,
-                method_suffix="_spacing",
-                data_dir=spacing_data_dir,
-            )
-        )
-
-    for model_dir, suffix in architecture_model_dirs.items():
-        records.extend(
-            collect_joblib_records(
-                Path(model_dir),
-                selected_exposures=selected_exposures,
-                method_suffix=suffix,
                 data_dir=data_dir,
             )
         )
@@ -293,7 +273,8 @@ def plot_records(records, output_path):
 
     fig, ax = plt.subplots(figsize=(8.8, 5.4))
 
-    methods = sorted({record["method"] for record in records})
+    methods = ordered_plot_methods(records)
+    colors = assign_model_colors(methods)
 
     for method in methods:
         group = sorted(
@@ -305,7 +286,7 @@ def plot_records(records, output_path):
         y = [record["plot_infidelity"] for record in group]
         label = display_method_label(method)
 
-        ax.plot(x, y, marker="o", linewidth=2, label=label)
+        ax.plot(x, y, marker="o", linewidth=2, color=colors[method], label=label)
 
         theoretical_group = [
             record for record in group
@@ -324,12 +305,13 @@ def plot_records(records, output_path):
                 marker="x",
                 linestyle="--",
                 linewidth=1.5,
+                color=colors[method],
                 label=f"{label} theoretical",
             )
 
     ax.set_xlabel("Exposure time (ms)")
     ax.set_ylabel("Infidelity, 1 - F")
-    ax.set_title("Infidelity vs Exposure Time")
+    # ax.set_title("Infidelity vs Exposure Time")
     ax.set_yscale("log")
     log_formatter = ax.yaxis.get_major_formatter()
     ax.yaxis.set_major_formatter(
@@ -380,7 +362,7 @@ def make_test_loader(
             batch_size=batch_size,
             num_workers=num_workers,
             shuffle=False,
-            return_sites=model["method"] != lightweight_cnn_site_method,
+            return_sites=model["method"] != constants.tinycnn_method,
         )
 
     use_preprocessing = normalized in {
@@ -754,7 +736,6 @@ def write_records_csv(records, output_path):
 
 def print_empty_records_diagnostics(
     model_dirs,
-    spacing_model_dirs,
     all_records,
 ):
     print("No selected model records found.")
@@ -764,12 +745,6 @@ def print_empty_records_diagnostics(
         model_dir = Path(model_dir)
         n_joblibs = len(list(model_dir.glob("*.joblib"))) if model_dir.exists() else 0
         print(f"  {model_dir}  exists={model_dir.exists()}  joblibs={n_joblibs}")
-    print("Checked spacing model directories:")
-    for model_dir in spacing_model_dirs:
-        model_dir = Path(model_dir)
-        n_joblibs = len(list(model_dir.glob("*.joblib"))) if model_dir.exists() else 0
-        print(f"  {model_dir}  exists={model_dir.exists()}  joblibs={n_joblibs}")
-
     if all_records:
         print("Available methods from found records:")
         print_available_method_summary(all_records)
@@ -785,11 +760,7 @@ def main(
     model_dirs=(
         default_model_dir,
     ),
-    spacing_model_dirs=(
-        default_spacing_model_dir,
-    ),
     data_dir=default_data_dir,
-    spacing_data_dir=default_spacing_data_dir,
     output_dir=default_output_dir,
     batch_size=batch_size,
     num_workers=num_workers,
@@ -807,10 +778,8 @@ def main(
 
     all_records = collect_records(
         model_dirs=model_dirs,
-        spacing_model_dirs=spacing_model_dirs,
         selected_exposures=selected_exposures,
         data_dir=data_dir,
-        spacing_data_dir=spacing_data_dir,
     )
     if print_available_methods:
         print_available_method_summary(all_records)
@@ -820,18 +789,9 @@ def main(
         record for record in all_records
         if method_matches(record["method"], selected_methods)
     ]
-    if only_4_8_16:
-        architecture_suffixes = tuple(architecture_model_dirs.values())
-        records = [
-            record for record in records
-            if not record["method"].startswith("lightweight_cnn_site")
-            or record["method"].endswith(architecture_suffixes)
-        ]
-
     if not records:
         print_empty_records_diagnostics(
             model_dirs=model_dirs,
-            spacing_model_dirs=spacing_model_dirs,
             all_records=all_records,
         )
         return
@@ -868,6 +828,5 @@ def main(
 if __name__ == "__main__":
     main(
         data_dir=default_data_dir,
-        spacing_data_dir=default_spacing_data_dir,
         output_dir=default_output_dir,
     )

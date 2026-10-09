@@ -1,0 +1,26 @@
+\section{Introduction}\label{sec:introduction}
+Neutral atoms trapped in optical tweezer arrays represent a leading platform for quantum computing. In these systems, qubit states are determined through fluorescence imaging, where atoms emit photons that are captured by a sensitive camera, and the occupation of each trap site is inferred from the resulting image~\cite{winklmann2023,su2026}. Readout is required for register initialization, final measurement at the end of a circuit, and for mid-circuit measurements. The readout results must be available rapidly to make this technology financially viable~\cite{su2026,mude2025}.
+There is an inherent trade-off between readout speed and accuracy. Short exposures collect fewer photons, resulting in a low signal-to-noise ratio (SNR) that renders simple thresholding of summed pixels insufficient, whereas longer exposures enhance fidelity but increase the duration of each readout cycle~\cite{su2026,mude2025}. Additionally, atom spacing is limited to a few point-spread-function (PSF) widths, causing light to spill onto neighboring sites and reduce detection accuracy~\cite{impertro2023,phuttitarn2023}.
+According to~\cite{phuttitarn2023,kent2025}, convolutional neural networks (CNNs) and matched filter (MF) models reduce readout error at short exposures compared to traditional threshold filters. However, their practical use in real-time experiments is constrained by the computational platform. On central processing units (CPUs) and graphics processing units (GPUs), latency is relatively high and non-deterministic due to memory transfers and host-to-device communication~\cite{su2026}. Su et al.\ showcase that field-programmable gate arrays (FPGAs) provide a deterministic alternative and report an inference latency of \SI{9.85}{\micro\second} per site at \SI{500}{\mega\hertz}, approximately 30 times faster than CPU and GPU implementations~\cite{su2026}.
+This research investigates the effects of model parameter reduction and the injection of information from neighboring sites on readout fidelity. The contributions are as follows:
+\begin{itemize}
+    \item A compact, hardware-friendly network derived from the CNN introduced by Phuttitarn et al.~\cite{phuttitarn2023}.
+    \item A conditioning scheme that injects neighbor information into the network, using either the mean or a Gaussian-weighted mean of each neighbor's crop.
+    \item An automated script that finds the optimal per-layer precisions for model quantization.
+\end{itemize}
+The rest of this report is organized as follows. \Cref{sec:sota} reviews related work. \Cref{sec:simbase} describes the simulated and experimental datasets and the baseline detectors, and \cref{sec:network} details the network design. \Cref{sec:dlresults} presents the deep learning results, \cref{sec:quant} describes the post-training quantization, \cref{sec:fpga} discusses the FPGA implementation, \cref{sec:results} presents its results, and \cref{sec:discussion} addresses open questions and outlines future directions.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

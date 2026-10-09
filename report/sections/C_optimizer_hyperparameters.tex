@@ -1,0 +1,26 @@
+\section{Optimizer Hyperparameters}\label{app:optimizer}
+
+\begin{table}[H]
+    \centering
+    \caption{Hyperparameters of the width optimization.}
+    \label{tab:optimizer}
+    \begin{tabular}{@{}p{6.6cm}p{7.6cm}@{}}
+        \toprule
+        Parameter & Value \\
+        \midrule
+        Acceptance band & $\pm\,0.05$\,p.p. \\
+        Evaluation data & test images \\
+        Objective & $\sum$ multiplications $\times$ weight bits $\times$ activation bits \\
+        Number of blocks & 6 \\
+        Weight widths in the sensitivity sweep & 2 to 10, 12, 14, 16, 18, 20 bits \\
+        Maximum weight width & 18 bits \\
+        Activation width & 27/18 of the weight width \\
+        Range of activations & 0.1th to 99.9th percentile \\
+        Saturation margin & 0 bits \\
+        Rounding and overflow & round to nearest, saturate \\
+        Repair step & 1 bit \\
+        Descent step & 1 bit \\
+        Maximum number of evaluations & 150 \\
+        \bottomrule
+    \end{tabular}
+\end{table}

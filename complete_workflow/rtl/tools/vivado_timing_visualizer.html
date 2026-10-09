@@ -1,0 +1,745 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vivado Timing Report Explorer</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --page: #07111f;
+      --panel: #0d1b2d;
+      --panel-2: #11243a;
+      --line: #25405c;
+      --text: #ecf5ff;
+      --muted: #9fb3c9;
+      --cyan: #45d6d0;
+      --blue: #5da9ff;
+      --green: #57d38c;
+      --amber: #ffbd59;
+      --red: #ff6b6b;
+      --purple: #b696ff;
+      --shadow: 0 18px 55px rgba(0, 0, 0, .28);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 12% 0%, rgba(69, 214, 208, .12), transparent 30rem),
+        radial-gradient(circle at 90% 18%, rgba(93, 169, 255, .10), transparent 32rem),
+        var(--page);
+      color: var(--text);
+      font: 15px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    button, input, select { font: inherit; }
+
+    .shell {
+      width: min(1500px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 34px 0 64px;
+    }
+
+    header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 28px;
+      margin-bottom: 24px;
+    }
+
+    .eyebrow {
+      color: var(--cyan);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .15em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 7px 0 8px;
+      font-size: clamp(28px, 4vw, 48px);
+      line-height: 1.05;
+      letter-spacing: -.035em;
+    }
+
+    header p {
+      max-width: 740px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    .privacy {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      flex: 0 0 auto;
+      padding: 9px 12px;
+      border: 1px solid rgba(87, 211, 140, .35);
+      border-radius: 999px;
+      background: rgba(87, 211, 140, .08);
+      color: #bff5d3;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .privacy::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 14px var(--green);
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(13, 27, 45, .92);
+      box-shadow: var(--shadow);
+    }
+
+    .drop-zone {
+      padding: 26px;
+      border: 1px dashed #3e6688;
+      border-radius: 18px;
+      background: linear-gradient(135deg, rgba(69, 214, 208, .07), rgba(93, 169, 255, .04));
+      text-align: center;
+      transition: .18s ease;
+      cursor: pointer;
+    }
+
+    .drop-zone.dragging {
+      border-color: var(--cyan);
+      background: rgba(69, 214, 208, .13);
+      transform: translateY(-2px);
+    }
+
+    .drop-title { font-size: 18px; font-weight: 800; }
+    .drop-subtitle { margin-top: 5px; color: var(--muted); }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 16px;
+      padding: 10px 15px;
+      border: 1px solid rgba(69, 214, 208, .45);
+      border-radius: 10px;
+      background: rgba(69, 214, 208, .12);
+      color: var(--text);
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .button:hover { background: rgba(69, 214, 208, .20); }
+    .button.secondary { border-color: var(--line); background: var(--panel-2); }
+    input[type=file] { display: none; }
+
+    #workspace { display: none; margin-top: 22px; }
+
+    .report-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 14px 16px;
+      margin-bottom: 16px;
+    }
+
+    .report-picker {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .report-picker label { color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; }
+
+    select, .search {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #0a1728;
+      color: var(--text);
+      padding: 9px 11px;
+      outline: none;
+    }
+
+    select:focus, .search:focus { border-color: var(--cyan); }
+    #reportSelect { min-width: min(520px, 65vw); }
+
+    .metadata {
+      color: var(--muted);
+      font-size: 12px;
+      text-align: right;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(150px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .card {
+      min-height: 118px;
+      padding: 17px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: linear-gradient(160deg, rgba(17, 36, 58, .96), rgba(10, 24, 40, .96));
+    }
+
+    .card-label {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .card-value {
+      margin-top: 9px;
+      font-size: clamp(23px, 3vw, 34px);
+      font-weight: 850;
+      letter-spacing: -.03em;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .card-note { margin-top: 3px; color: var(--muted); font-size: 12px; }
+    .good { color: var(--green); }
+    .bad { color: var(--red); }
+    .warn { color: var(--amber); }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.25fr) minmax(330px, .75fr);
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    .section { padding: 18px; }
+    .section h2 { margin: 0; font-size: 18px; }
+    .section-title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 15px;
+    }
+    .section-title span { color: var(--muted); font-size: 12px; }
+
+    .path-bars { display: grid; gap: 9px; }
+    .path-bar {
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr) 74px;
+      gap: 10px;
+      align-items: center;
+      padding: 7px 8px;
+      border-radius: 9px;
+      cursor: pointer;
+    }
+    .path-bar:hover { background: rgba(93, 169, 255, .07); }
+    .rank { color: var(--muted); font-size: 12px; text-align: right; }
+    .bar-track { height: 12px; border-radius: 99px; background: #07111f; overflow: hidden; }
+    .bar-fill { height: 100%; min-width: 2px; border-radius: inherit; background: var(--red); }
+    .bar-fill.met { background: var(--green); }
+    .bar-value { font-variant-numeric: tabular-nums; font-size: 12px; text-align: right; }
+
+    .guide { display: grid; gap: 11px; }
+    .definition {
+      padding: 11px 12px;
+      border-left: 3px solid var(--blue);
+      border-radius: 0 9px 9px 0;
+      background: rgba(93, 169, 255, .06);
+    }
+    .definition strong { display: block; margin-bottom: 2px; }
+    .definition span { color: var(--muted); font-size: 13px; }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 13px;
+    }
+    .search { flex: 1 1 310px; }
+    .check {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .table-wrap {
+      overflow: auto;
+      max-height: 520px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      padding: 10px 9px;
+      background: #10243a;
+      color: #b9cee2;
+      text-align: left;
+      font-size: 10px;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    td { padding: 10px 9px; border-top: 1px solid rgba(37, 64, 92, .65); vertical-align: top; }
+    tbody tr { cursor: pointer; }
+    tbody tr:hover, tbody tr.selected { background: rgba(69, 214, 208, .07); }
+    .number { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .endpoint { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .status-dot { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--red); }
+    .status-dot.met { background: var(--green); }
+
+    #details { display: none; margin-top: 16px; }
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(120px, 1fr));
+      gap: 10px;
+      margin: 14px 0;
+    }
+    .mini { padding: 11px; border: 1px solid var(--line); border-radius: 10px; background: #09182a; }
+    .mini .card-value { margin-top: 4px; font-size: 20px; }
+    .endpoint-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .endpoint-box { padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #09182a; }
+    .endpoint-box code { display: block; margin-top: 5px; color: #cbe2f7; overflow-wrap: anywhere; }
+
+    .delay-track {
+      display: flex;
+      height: 18px;
+      margin: 15px 0 6px;
+      overflow: hidden;
+      border-radius: 99px;
+      background: #07111f;
+    }
+    .logic-part { background: var(--purple); }
+    .route-part { background: var(--blue); }
+    .legend { display: flex; gap: 16px; color: var(--muted); font-size: 12px; }
+    .swatch { display: inline-block; width: 9px; height: 9px; margin-right: 5px; border-radius: 2px; }
+
+    details { margin-top: 15px; }
+    summary { color: var(--cyan); cursor: pointer; font-weight: 750; }
+    pre {
+      max-height: 430px;
+      overflow: auto;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #050c16;
+      color: #bcd1e5;
+      font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      white-space: pre;
+    }
+
+    .empty {
+      padding: 28px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .error {
+      display: none;
+      margin-top: 14px;
+      padding: 12px 14px;
+      border: 1px solid rgba(255, 107, 107, .45);
+      border-radius: 10px;
+      background: rgba(255, 107, 107, .08);
+      color: #ffc6c6;
+    }
+
+    @media (max-width: 1000px) {
+      .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid { grid-template-columns: 1fr; }
+      header { flex-direction: column; }
+      .privacy { align-self: flex-start; }
+    }
+
+    @media (max-width: 650px) {
+      .shell { width: min(100% - 18px, 1500px); padding-top: 20px; }
+      .cards, .detail-grid, .endpoint-pair { grid-template-columns: 1fr; }
+      .report-bar { align-items: stretch; flex-direction: column; }
+      .report-picker { align-items: stretch; flex-direction: column; }
+      #reportSelect { min-width: 0; width: 100%; }
+      .metadata { text-align: left; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <div class="eyebrow">Vivado report explorer</div>
+        <h1>Read timing reports visually.</h1>
+        <p>Load a routed or synthesized Vivado timing report, inspect the reported numbers, and trace each path back to its source and destination registers.</p>
+      </div>
+      <div class="privacy">Runs locally in your browser</div>
+    </header>
+
+    <section id="dropZone" class="drop-zone panel" tabindex="0" role="button" aria-label="Choose Vivado timing reports">
+      <div class="drop-title">Drop timing report files here</div>
+      <div class="drop-subtitle">Load one or several <code>timing_*.rpt</code> files to switch between runs.</div>
+      <label class="button" for="fileInput">Choose report files</label>
+      <input id="fileInput" type="file" accept=".rpt,.txt,.log" multiple>
+    </section>
+    <div id="error" class="error"></div>
+
+    <section id="workspace">
+      <div class="report-bar panel">
+        <div class="report-picker">
+          <label for="reportSelect">Active report</label>
+          <select id="reportSelect"></select>
+          <label class="button secondary" for="fileInput">Add reports</label>
+        </div>
+        <div id="metadata" class="metadata"></div>
+      </div>
+
+      <div class="cards">
+        <article class="card"><div class="card-label">Timing status</div><div id="statusValue" class="card-value">—</div><div id="statusNote" class="card-note">—</div></article>
+        <article class="card"><div class="card-label">Worst negative slack</div><div id="wnsValue" class="card-value">—</div><div class="card-note">Worst setup margin</div></article>
+        <article class="card"><div class="card-label">Total negative slack</div><div id="tnsValue" class="card-value">—</div><div class="card-note">Sum across failing endpoints</div></article>
+        <article class="card"><div class="card-label">Failing endpoints</div><div id="endpointValue" class="card-value">—</div><div id="endpointNote" class="card-note">—</div></article>
+        <article class="card"><div class="card-label">Clock</div><div id="clockValue" class="card-value">—</div><div id="clockNote" class="card-note">—</div></article>
+      </div>
+
+      <div class="grid">
+        <section class="panel section">
+          <div class="section-title"><h2>Worst reported paths</h2><span id="barCaption"></span></div>
+          <div id="pathBars" class="path-bars"></div>
+        </section>
+
+        <aside class="panel section">
+          <div class="section-title"><h2>How to read the summary</h2></div>
+          <div class="guide">
+            <div class="definition"><strong>WNS</strong><span>Margin of the single worst setup path. Negative means late.</span></div>
+            <div class="definition"><strong>TNS</strong><span>Sum of negative setup slack over every failing endpoint.</span></div>
+            <div class="definition"><strong>Data-path delay</strong><span>Delay through logic and routing between the source and destination registers.</span></div>
+            <div class="definition"><strong>Logic levels</strong><span>Number of combinational primitives crossed by the reported path.</span></div>
+          </div>
+        </aside>
+      </div>
+
+      <section class="panel section">
+        <div class="section-title"><h2>Timing paths</h2><span id="pathCount"></span></div>
+        <div class="toolbar">
+          <input id="search" class="search" type="search" placeholder="Filter source, destination, path type…">
+          <select id="sortSelect" aria-label="Sort paths">
+            <option value="slack">Worst slack first</option>
+            <option value="delay">Longest data delay first</option>
+            <option value="route">Highest routing share first</option>
+            <option value="levels">Most logic levels first</option>
+          </select>
+          <label class="check"><input id="failingOnly" type="checkbox" checked> Failing only</label>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>#</th><th>Status</th><th class="number">Slack</th><th class="number">Delay</th><th class="number">Logic</th><th class="number">Route</th><th class="number">Levels</th><th>Source</th><th>Destination</th></tr>
+            </thead>
+            <tbody id="pathTable"></tbody>
+          </table>
+          <div id="emptyTable" class="empty" hidden>No timing paths match the current filter.</div>
+        </div>
+      </section>
+
+      <section id="details" class="panel section">
+        <div class="section-title"><h2 id="detailTitle">Selected path</h2><span id="detailType"></span></div>
+        <div class="endpoint-pair">
+          <div class="endpoint-box"><div class="card-label">Source register</div><code id="detailSource"></code></div>
+          <div class="endpoint-box"><div class="card-label">Destination register</div><code id="detailDestination"></code></div>
+        </div>
+        <div class="detail-grid">
+          <div class="mini"><div class="card-label">Slack</div><div id="detailSlack" class="card-value"></div></div>
+          <div class="mini"><div class="card-label">Requirement</div><div id="detailRequirement" class="card-value"></div></div>
+          <div class="mini"><div class="card-label">Data delay</div><div id="detailDelay" class="card-value"></div></div>
+          <div class="mini"><div class="card-label">Logic levels</div><div id="detailLevels" class="card-value"></div></div>
+        </div>
+        <div class="delay-track" aria-label="Logic and routing delay proportions"><div id="logicPart" class="logic-part"></div><div id="routePart" class="route-part"></div></div>
+        <div class="legend"><span><i class="swatch logic-part"></i><span id="logicLegend"></span></span><span><i class="swatch route-part"></i><span id="routeLegend"></span></span></div>
+        <details><summary>Show this path exactly as Vivado reported it</summary><pre id="rawPath"></pre></details>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    "use strict";
+
+    const state = { reports: [], active: 0, selectedPath: null };
+    const el = id => document.getElementById(id);
+    const format = (value, digits = 3) => Number.isFinite(value) ? value.toFixed(digits) : "—";
+    const integer = value => Number.isFinite(value) ? value.toLocaleString() : "—";
+
+    function metadataValue(text, label) {
+      const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const match = text.match(new RegExp("^\\|\\s*" + escaped + "\\s*:\\s*(.*?)\\s*$", "mi"));
+      return match ? match[1].trim() : "";
+    }
+
+    function parseSummary(lines) {
+      const start = lines.findIndex(line => line.includes("Design Timing Summary"));
+      if (start < 0) return null;
+      const row = /^\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(\d+)\s+(\d+)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(\d+)\s+(\d+)\s*$/;
+      for (let i = start; i < Math.min(lines.length, start + 20); i++) {
+        const match = lines[i].match(row);
+        if (match) {
+          return {
+            wns: Number(match[1]), tns: Number(match[2]), failing: Number(match[3]), total: Number(match[4]),
+            wpws: Number(match[5]), tpws: Number(match[6]), pulseFailing: Number(match[7]), pulseTotal: Number(match[8])
+          };
+        }
+      }
+      return null;
+    }
+
+    function parseClock(lines) {
+      const start = lines.findIndex(line => /^Clock\s+Waveform\(ns\)/.test(line.trim()));
+      if (start < 0) return null;
+      const row = /^\s*(\S+)\s+\{([^}]+)\}\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s*$/;
+      for (let i = start + 1; i < Math.min(lines.length, start + 10); i++) {
+        const match = lines[i].match(row);
+        if (match) return { name: match[1], waveform: match[2], period: Number(match[3]), frequency: Number(match[4]) };
+      }
+      return null;
+    }
+
+    function valueFrom(block, pattern) {
+      const match = block.match(pattern);
+      return match ? match[1].trim() : "";
+    }
+
+    function parsePaths(lines) {
+      const starts = [];
+      const slackPattern = /^Slack \((VIOLATED|MET)\)\s*:\s*(-?\d+(?:\.\d+)?)ns/;
+      for (let i = 0; i < lines.length; i++) {
+        const match = lines[i].trim().match(slackPattern);
+        if (match) starts.push({ line: i, status: match[1], slack: Number(match[2]) });
+      }
+
+      return starts.map((entry, index) => {
+        let end = Math.min(lines.length, entry.line + 150);
+        for (let i = entry.line + 1; i < end; i++) {
+          const trimmed = lines[i].trim();
+          if (slackPattern.test(trimmed) || trimmed === "Max Delay Paths" || trimmed === "Min Delay Paths") {
+            end = i;
+            break;
+          }
+        }
+        const raw = lines.slice(entry.line, end).join("\n").trimEnd();
+        const delay = raw.match(/Data Path Delay:\s*(-?\d+(?:\.\d+)?)ns\s*\(logic\s+(-?\d+(?:\.\d+)?)ns\s*\(([\d.]+)%\)\s+route\s+(-?\d+(?:\.\d+)?)ns\s*\(([\d.]+)%\)\)/);
+        const levels = raw.match(/Logic Levels:\s*(\d+)\s*(?:\((.*?)\))?/);
+        return {
+          id: index,
+          rank: index + 1,
+          status: entry.status,
+          slack: entry.slack,
+          source: valueFrom(raw, /^\s*Source:\s*(.+)$/m),
+          destination: valueFrom(raw, /^\s*Destination:\s*(.+)$/m),
+          group: valueFrom(raw, /^\s*Path Group:\s*(.+)$/m),
+          type: valueFrom(raw, /^\s*Path Type:\s*(.+)$/m),
+          requirement: Number(valueFrom(raw, /^\s*Requirement:\s*(-?\d+(?:\.\d+)?)ns/m)),
+          delay: delay ? Number(delay[1]) : NaN,
+          logicDelay: delay ? Number(delay[2]) : NaN,
+          logicPercent: delay ? Number(delay[3]) : NaN,
+          routeDelay: delay ? Number(delay[4]) : NaN,
+          routePercent: delay ? Number(delay[5]) : NaN,
+          levels: levels ? Number(levels[1]) : NaN,
+          primitives: levels && levels[2] ? levels[2] : "",
+          raw
+        };
+      });
+    }
+
+    function parseReport(text, name) {
+      const lines = text.replace(/\r/g, "").split("\n");
+      const summary = parseSummary(lines);
+      const paths = parsePaths(lines);
+      if (!summary && !paths.length) throw new Error(name + " does not look like a Vivado timing summary report.");
+      return {
+        name, text, summary, paths, clock: parseClock(lines),
+        tool: metadataValue(text, "Tool Version"),
+        design: metadataValue(text, "Design"),
+        device: metadataValue(text, "Device"),
+        designState: metadataValue(text, "Design State"),
+        date: metadataValue(text, "Date")
+      };
+    }
+
+    async function loadFiles(files) {
+      const errors = [];
+      for (const file of files) {
+        try {
+          const text = await file.text();
+          const report = parseReport(text, file.name);
+          report.key = [file.name, file.size, file.lastModified].join(":");
+          const existing = state.reports.findIndex(item => item.key === report.key);
+          if (existing >= 0) state.reports[existing] = report;
+          else state.reports.push(report);
+        } catch (error) {
+          errors.push(error.message);
+        }
+      }
+      if (errors.length) showError(errors.join(" "));
+      else hideError();
+      if (state.reports.length) {
+        state.active = state.reports.length - 1;
+        state.selectedPath = null;
+        render();
+      }
+    }
+
+    function showError(message) { el("error").textContent = message; el("error").style.display = "block"; }
+    function hideError() { el("error").style.display = "none"; }
+
+    function activeReport() { return state.reports[state.active]; }
+
+    function render() {
+      el("workspace").style.display = "block";
+      el("reportSelect").innerHTML = state.reports.map((report, index) =>
+        `<option value="${index}" ${index === state.active ? "selected" : ""}>${escapeHtml(report.name + (report.clock ? " · " + format(report.clock.frequency, 0) + " MHz" : ""))}</option>`
+      ).join("");
+
+      const report = activeReport();
+      const summary = report.summary;
+      const clock = report.clock;
+      el("metadata").innerHTML = [report.design, report.device, report.designState].filter(Boolean).map(escapeHtml).join(" · ") || "Vivado timing report";
+
+      if (summary) {
+        const met = summary.wns >= 0 && summary.failing === 0;
+        el("statusValue").textContent = met ? "MET" : "VIOLATED";
+        el("statusValue").className = "card-value " + (met ? "good" : "bad");
+        el("statusNote").textContent = met ? "All reported setup constraints met" : "One or more setup paths are late";
+        el("wnsValue").textContent = format(summary.wns) + " ns";
+        el("wnsValue").className = "card-value " + (summary.wns >= 0 ? "good" : "bad");
+        el("tnsValue").textContent = format(summary.tns) + " ns";
+        el("tnsValue").className = "card-value " + (summary.tns >= 0 ? "good" : "bad");
+        el("endpointValue").textContent = integer(summary.failing);
+        el("endpointValue").className = "card-value " + (summary.failing === 0 ? "good" : "bad");
+        el("endpointNote").textContent = integer(summary.total) + " total setup endpoints";
+      } else {
+        ["statusValue", "wnsValue", "tnsValue", "endpointValue"].forEach(id => el(id).textContent = "—");
+      }
+
+      el("clockValue").textContent = clock ? format(clock.frequency, 0) + " MHz" : "—";
+      el("clockNote").textContent = clock ? format(clock.period) + " ns period · " + clock.name : "Clock table not found";
+
+      renderBars(report.paths);
+      renderTable();
+      if (state.selectedPath != null) {
+        const path = report.paths.find(item => item.id === state.selectedPath);
+        if (path) renderDetails(path);
+        else el("details").style.display = "none";
+      } else {
+        el("details").style.display = "none";
+      }
+    }
+
+    function renderBars(paths) {
+      const shown = [...paths].sort((a, b) => a.slack - b.slack).slice(0, 12);
+      const maxMagnitude = Math.max(...shown.map(path => Math.abs(path.slack)), .001);
+      el("barCaption").textContent = shown.length ? "Click a bar to inspect that path" : "No detailed paths found";
+      el("pathBars").innerHTML = shown.length ? shown.map(path => {
+        const width = Math.max(2, Math.abs(path.slack) / maxMagnitude * 100);
+        return `<div class="path-bar" data-id="${path.id}" title="${escapeHtml(path.source)} → ${escapeHtml(path.destination)}">
+          <div class="rank">#${path.rank}</div>
+          <div class="bar-track"><div class="bar-fill ${path.status === "MET" ? "met" : ""}" style="width:${width}%"></div></div>
+          <div class="bar-value ${path.slack < 0 ? "bad" : "good"}">${format(path.slack)} ns</div>
+        </div>`;
+      }).join("") : `<div class="empty">No Max Delay Paths were found in this report.</div>`;
+      el("pathBars").querySelectorAll(".path-bar").forEach(node => node.addEventListener("click", () => selectPath(Number(node.dataset.id))));
+    }
+
+    function filteredPaths() {
+      const report = activeReport();
+      const query = el("search").value.trim().toLowerCase();
+      let paths = report.paths.filter(path => {
+        if (el("failingOnly").checked && path.slack >= 0) return false;
+        if (!query) return true;
+        return [path.source, path.destination, path.type, path.group, path.primitives].join(" ").toLowerCase().includes(query);
+      });
+      const sort = el("sortSelect").value;
+      paths.sort((a, b) => {
+        if (sort === "delay") return finiteOr(b.delay, -Infinity) - finiteOr(a.delay, -Infinity);
+        if (sort === "route") return finiteOr(b.routePercent, -Infinity) - finiteOr(a.routePercent, -Infinity);
+        if (sort === "levels") return finiteOr(b.levels, -Infinity) - finiteOr(a.levels, -Infinity);
+        return a.slack - b.slack;
+      });
+      return paths;
+    }
+
+    function finiteOr(value, fallback) { return Number.isFinite(value) ? value : fallback; }
+
+    function renderTable() {
+      const paths = filteredPaths();
+      el("pathCount").textContent = paths.length + " displayed · " + activeReport().paths.length + " parsed";
+      el("emptyTable").hidden = paths.length > 0;
+      el("pathTable").innerHTML = paths.map(path => `<tr data-id="${path.id}" class="${state.selectedPath === path.id ? "selected" : ""}">
+        <td class="number">${path.rank}</td>
+        <td><span class="status-dot ${path.status === "MET" ? "met" : ""}"></span>${path.status}</td>
+        <td class="number ${path.slack < 0 ? "bad" : "good"}">${format(path.slack)} ns</td>
+        <td class="number">${format(path.delay)} ns</td>
+        <td class="number">${format(path.logicPercent, 1)}%</td>
+        <td class="number">${format(path.routePercent, 1)}%</td>
+        <td class="number">${integer(path.levels)}</td>
+        <td class="endpoint" title="${escapeHtml(path.source)}">${escapeHtml(path.source)}</td>
+        <td class="endpoint" title="${escapeHtml(path.destination)}">${escapeHtml(path.destination)}</td>
+      </tr>`).join("");
+      el("pathTable").querySelectorAll("tr").forEach(row => row.addEventListener("click", () => selectPath(Number(row.dataset.id))));
+    }
+
+    function selectPath(id) {
+      state.selectedPath = id;
+      renderTable();
+      const path = activeReport().paths.find(item => item.id === id);
+      if (path) {
+        renderDetails(path);
+        el("details").scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }
+
+    function renderDetails(path) {
+      el("details").style.display = "block";
+      el("detailTitle").textContent = "Path #" + path.rank;
+      el("detailType").textContent = [path.group, path.type].filter(Boolean).join(" · ");
+      el("detailSource").textContent = path.source || "Not parsed";
+      el("detailDestination").textContent = path.destination || "Not parsed";
+      el("detailSlack").textContent = format(path.slack) + " ns";
+      el("detailSlack").className = "card-value " + (path.slack < 0 ? "bad" : "good");
+      el("detailRequirement").textContent = format(path.requirement) + " ns";
+      el("detailDelay").textContent = format(path.delay) + " ns";
+      el("detailLevels").textContent = integer(path.levels);
+      const logic = Number.isFinite(path.logicPercent) ? path.logicPercent : 0;
+      const route = Number.isFinite(path.routePercent) ? path.routePercent : 0;
+      el("logicPart").style.width = logic + "%";
+      el("routePart").style.width = route + "%";
+      el("logicLegend").textContent = "Logic " + format(path.logicDelay) + " ns (" + format(logic, 1) + "%)";
+      el("routeLegend").textContent = "Route " + format(path.routeDelay) + " ns (" + format(route, 1) + "%)";
+      el("rawPath").textContent = path.raw;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+    }
+
+    const dropZone = el("dropZone");
+    dropZone.addEventListener("click", event => { if (!event.target.closest("label")) el("fileInput").click(); });
+    dropZone.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") el("fileInput").click(); });
+    ["dragenter", "dragover"].forEach(type => dropZone.addEventListener(type, event => { event.preventDefault(); dropZone.classList.add("dragging"); }));
+    ["dragleave", "drop"].forEach(type => dropZone.addEventListener(type, event => { event.preventDefault(); dropZone.classList.remove("dragging"); }));
+    dropZone.addEventListener("drop", event => loadFiles([...event.dataTransfer.files]));
+    el("fileInput").addEventListener("change", event => { loadFiles([...event.target.files]); event.target.value = ""; });
+    el("reportSelect").addEventListener("change", event => { state.active = Number(event.target.value); state.selectedPath = null; render(); });
+    ["search", "sortSelect", "failingOnly"].forEach(id => el(id).addEventListener(id === "search" ? "input" : "change", renderTable));
+  </script>
+</body>
+</html>

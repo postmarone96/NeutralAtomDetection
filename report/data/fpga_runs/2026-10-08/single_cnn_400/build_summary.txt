@@ -1,0 +1,11 @@
+top=neutral_atom_kernel
+platform=/opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm
+frequency_mhz=400
+compute_units=1
+site_count=9
+vivado_version=2024.2
+vitis_version=2024.2
+runtime_clock_verified=1
+routed_timing_pass=1
+contents=AXI4_Lite_plus_AXI4_HBM_plus_preprocessing_plus_neighbor_CNN
+xclbin=/u/home/hajm/NeutralAtomDetection/complete_workflow/rtl/impl/alveo_400_single_cnn_20261008/neutral_atom_detector.xclbin

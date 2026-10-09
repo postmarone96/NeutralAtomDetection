@@ -1,0 +1,86 @@
+\section{Implementation Results}\label{sec:results}
+
+\subsection{Target and setup}
+
+The design is implemented and deployed on the Alveo U55C accelerator card, which features the Virtex UltraScale+ High Bandwidth Memory (HBM) device XCU55C~\cite{amd2026u55c}. Synthesis, placement, and routing are performed using Vivado and Vitis 2024.2, and the design is tested on the card at \SI{400}{\mega\hertz}. Three hardware counters measure preprocessing, CNN inference for a single site, and the complete nine site pipeline from the first input pixel to the final prediction.
+
+\subsection{Latency}\label{sec:hardware-latency}
+
+The preprocessing counter stops when all neighbor features have been prepared, and the first site input is available. The CNN counter measures the interval from the inference start to the valid logits. The complete pipeline counter measures the interval from the first accepted pixel to the last of the nine predictions, including the handoff between preprocessing and inference and between successive sites.
+
+The conversion from cycles to time is
+\[
+    t\,[\mu\mathrm{s}] = \frac{N_{\mathrm{cycles}}}{f\,[\mathrm{MHz}]}.
+\]
+The hardware validation uses eight $28\times28$ test frames, each containing nine sites. All 72 pairs of logits and decisions match the fixed-point reference. \Cref{tab:hardware-latency} lists the counter values, which are identical in all eight validation runs.
+
+\begin{table}[H]
+    \centering
+    \caption{Hardware-counter measurements at 400 MHz.}
+    \label{tab:hardware-latency}
+    \begin{tabular}{@{}lrr@{}}
+        \toprule
+        Measurement & Cycles & Latency ($\mu$s) \\
+        \midrule
+        Preprocessing, all nine sites & \num{802}  & \num{2.0050} \\
+        CNN inference, one site       & \num{858}  & \num{2.1450} \\
+        Complete pipeline, nine sites & \num{8559} & \num{21.3975} \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Su et al.~\cite{su2026} report a CNN inference latency of \SI{9.85}{\micro\second} at \SI{500}{\mega\hertz}, excluding preprocessing. The corresponding comparison is with the CNN measurement of this work. The two networks use different architectures and input sizes: Su et al.\ use $20\times20$ site patches, whereas the present model uses $10\times10$ crops and eight neighbor features.
+The measured CNN latency of \SI{2.145}{\micro\second} is $4.59\times$ shorter than their published latency, corresponding to a \SI{78.2}{\percent} reduction at a \SI{20}{\percent} lower clock frequency.
+
+\subsection{Resource use}\label{sec:hardware-resources}
+
+Table \ref{tab:hardware-resources} compares routed resource usage with Table III of Su et al. \cite{su2026}. The CNN column offers the most direct comparison to their accelerator. In contrast, the detector column also accounts for preprocessing across nine sites, the site scheduler, packet registers, and latency counters. Both columns omit the Advanced eXtensible Interface (AXI) wrapper and the platform shell.
+
+% Source: data/fpga_runs/2026-10-08/single_cnn_400/utilization_hierarchical_routed.rpt;
+% alveo_400_single_cnn_20261008; Su et al., Table III, p. 7.
+% Percentages for the CNN hierarchy are calculated from the XCU55C capacity:
+% 1,303,680 LUTs; 2,607,360 FFs; 9,024 DSPs; 2,016 BRAM tiles.
+\begin{table}[H]
+    \centering
+    \small
+    \setlength{\tabcolsep}{5pt}
+    \caption[Resource comparison with Su et al.\ (Table III).]{Resource comparison with Su et al.\ (Table III). Percentages refer to each design's own FPGA. The XCU55C provides 1,304K LUTs, 2,607K flip-flops, 9,024 DSPs and 2,016 BRAM tiles~\cite{amd2026u55c}.}
+    \label{tab:hardware-resources}
+    \begin{tabular}{@{}lrrr@{}}
+        \toprule
+        & \shortstack{Su et al.\\CNN, ZCU208}
+        & \shortstack{This work\\CNN, U55C}
+        & \shortstack{This work\\Detector, U55C} \\
+        \midrule
+        LUTs & \num{26845} (6.31\%) & \num{19714} (1.51\%) & \num{26824} (2.05\%) \\
+        Flip-flops & \num{51943} (6.11\%) & \num{8993} (0.34\%) & \num{17694} (0.68\%) \\
+        DSPs & \num{800} (18.73\%) & \num{100} (1.11\%) & \num{101} (1.12\%) \\
+        BRAM tiles & \num{491} (45.46\%) & \num{1.5} (0.07\%) & \num{1.5} (0.07\%) \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+In absolute counts, the CNN core uses \SI{26.6}{\percent} fewer LUTs, \SI{82.7}{\percent} fewer flip-flops, \SI{87.5}{\percent} fewer DSPs and \SI{99.7}{\percent} fewer BRAM tiles than Su et al.'s implementation.
+The 100 MAC lanes account for the CNN's 100 DSPs. Preprocessing adds one DSP for neighbor normalization, \num{6967} LUTs, and \num{7608} flip-flops. The remaining detector logic uses 143 LUTs and \num{1093} flip-flops. Consequently, the complete detector uses 101 DSPs and maintains lower absolute counts across all four resource categories compared to the published accelerator, including \SI{0.08}{\percent} fewer LUTs.
+
+\subsection{Timing closure}\label{sec:timing-closure}
+
+At \SI{400}{\mega\hertz}, the clock period is \SI{2.5}{\nano\second}. Timing closure requires shortening the combinational paths between registers and simplifying the logic on critical paths. Registers introduced for timing closure are shown in light green in the figures (\cref{fig:hardware-overview,fig:preprocessor,fig:mac-lane}).
+
+\subsubsection{CNN core}
+
+The activation buffer read and the outputs of the input routing modules are registered, which separates activation selection from MAC arithmetic. Within each MAC lane, pipeline registers separate the activation and weight inputs, the multiplication stage, and the accumulation stage. Three further pipeline registers divide the processing of completed output blocks. The first captures the finished MAC accumulators before requantization, the second the requantized values before max pooling, and the third the pooled values, or the dense layer bypass values, before layer output assembly. Valid signals, together with their layer and output block indices, are delayed together with the data. Between preprocessing and the CNN, the site scheduler also captures the crop and neighbor packet in pipeline registers. The following \texttt{LOAD\_INPUT} state writes this packet into the CNN's activation storage, and \texttt{START\_INFERENCE} starts execution on the next edge. The convolution layer, input channel, and tap indices are also captured alongside the activation buffer read, so input routing uses metadata aligned with the returned data. These registers separate the long selection and control paths without changing the CNN's 858-cycle execution interval, and they are preserved during synthesis through preservation attributes.
+
+\subsubsection{Preprocessing}
+
+An input register separates pixel reception from normalization and crop selection. During neighbor calculation, selecting a crop sum and multiplying it by the normalization constant forms the critical path. To address this, an additional register is inserted between the sum selection multiplexer and the multiplier, ensuring the selected sum is available before multiplication begins. A product register separates multiplication from offset subtraction, rounding, and saturation. Loading the next sum while completing the current neighbor feature maintains the two-state conversion sequence.
+
+\subsubsection{Combinational logic simplification}
+
+Requantization is tailored to the fixed shift and output width specific to each layer. Rounding is performed on the retained bits, while saturation verifies the discarded upper bits for overflow. This approach reduces arithmetic width and eliminates the need for a general variable shift implementation.
+
+Max pooling is restructured to compare the four input values in parallel, rather than propagating intermediate maxima through sequential comparisons. The comparison results directly select the winning value. When precision conversion is necessary, candidate rounding is performed concurrently with the comparisons. These modifications reduce the pooling path length while preserving the numerical outcome.
+
+\subsubsection{Routed timing result}
+
+Vivado's routed static timing analysis verifies that the complete deployed design, including preprocessing, the CNN, AXI interfaces, and the Alveo platform shell, satisfies all timing constraints. The kernel clock period is \SI{2.5}{\nano\second}, corresponding to \SI{400}{\mega\hertz}. Across the complete design, the final worst setup slack is \SI{+0.003}{\nano\second} and the worst hold slack is \SI{+0.009}{\nano\second}, with no failing setup or hold endpoints. The successful hardware execution and consistency with the fixed-point reference confirm the functional validity of this timing-closed implementation.

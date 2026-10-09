@@ -1,0 +1,14 @@
+site 0: logits=(9, -3) decision=0
+site 1: logits=(-2, 5) decision=1
+site 2: logits=(13, -5) decision=0
+site 3: logits=(-8, 11) decision=1
+site 4: logits=(-52, 44) decision=1
+site 5: logits=(-41, 34) decision=1
+site 6: logits=(-50, 42) decision=1
+site 7: logits=(-29, 24) decision=1
+site 8: logits=(17, -7) decision=0
+Preprocessing (first pixel to all site data ready): 802 cycles = 2.005 us at 400 MHz
+CNN (one site, last site measured): 858 cycles = 2.145 us at 400 MHz
+Pipeline (first pixel to last prediction): 8559 cycles = 21.398 us at 400 MHz
+XRT end-to-end (input transfer to HBM through result readback): 299.140 us
+XRT profiling reports: /u/home/hajm/NeutralAtomDetection/complete_workflow/rtl/impl/alveo_400_single_cnn_20261008/hardware/profiles/single_6_s_io3w

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root versionMajor="1" versionMinor="6">
+  <kernel
+      name="neutral_atom_kernel"
+      language="ip_c"
+      vlnv="openai.org:RTLKernel:neutral_atom_kernel:1.0"
+      attributes=""
+      preferredWorkGroupSizeMultiple="0"
+      workGroupSize="1"
+      interrupt="true"
+      hwControlProtocol="ap_ctrl_hs">
+    <ports>
+      <port name="s_axi_control" mode="slave" range="0x1000"
+            dataWidth="32" portType="addressable" base="0x0"/>
+      <port name="m_axi_gmem" mode="master" range="0xFFFFFFFFFFFFFFFF"
+            dataWidth="512" portType="addressable" base="0x0"/>
+    </ports>
+    <args>
+      <arg name="frame" addressQualifier="1" id="0" port="m_axi_gmem"
+           size="0x8" offset="0x10" type="uint16_t*"
+           hostOffset="0x0" hostSize="0x8"/>
+      <arg name="results" addressQualifier="1" id="1" port="m_axi_gmem"
+           size="0x8" offset="0x1C" type="uint32_t*"
+           hostOffset="0x0" hostSize="0x8"/>
+    </args>
+  </kernel>
+</root>

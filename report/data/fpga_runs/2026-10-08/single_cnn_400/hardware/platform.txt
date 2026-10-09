@@ -1,0 +1,29 @@
+
+-------------------------------------------------
+[0000:01:00.1] : xilinx_u55c_gen3x16_xdma_base_3
+-------------------------------------------------
+Platform
+  XSA Name               : xilinx_u55c_gen3x16_xdma_base_3 
+  Logic UUID             : 97088961-FEAE-DA91-52A2-1D9DFD63CCEF 
+  FPGA Name              :  
+  JTAG ID Code           : 0x14b7d093 
+  DDR Size               : 0 Bytes
+  DDR Count              : 0 
+  Mig Calibrated         : true 
+  P2P Status             : disabled 
+  P2P IO space required  : 32 GB
+
+Clocks
+  DATA_CLK (Data)        : 400 MHz
+  KERNEL_CLK (Kernel)    : 500 MHz
+  hbm_aclk (System)      : 450 MHz
+
+Mac Addresses            : 00:0A:35:0F:6F:80
+                         : 00:0A:35:0F:6F:81
+                         : 00:0A:35:0F:6F:82
+                         : 00:0A:35:0F:6F:83
+                         : 00:0A:35:0F:6F:84
+                         : 00:0A:35:0F:6F:85
+                         : 00:0A:35:0F:6F:86
+                         : 00:0A:35:0F:6F:87
+

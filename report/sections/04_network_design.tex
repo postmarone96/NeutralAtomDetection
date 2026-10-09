@@ -1,0 +1,42 @@
+\section{Network Design}\label{sec:network}
+
+The CNN site in \cref{sec:simbase} is accurate, but \SI{74}{\percent} of its parameters reside in the first fully connected layer, which is a poor match for an FPGA. This research proposes TinyCNN, which preserves the CNN site architecture while drastically reducing network parameters and improving hardware friendliness (\cref{fig:tinycnn}).
+
+\begin{figure}[H]
+    \centering
+    \resizebox{\textwidth}{!}{\input{figures/tinycnn_plain.tex}}
+    \caption[The TinyCNN without neighbor injection.]{The TinyCNN without neighbor injection. The sizes below the blocks are channels $\times$ height $\times$ width.}
+    \label{fig:tinycnn}
+\end{figure}
+
+\subsection{Convolutional layers} All three convolutions use a $3\times3$ kernel with stride 1 and padding 1. With this padding, the height and width of the feature map stay the same as at the input, so the convolutions do not shrink the $10\times10$ crop and no border pixels are lost. The resolution is reduced only by max pooling with a $2\times2$ window after the first two convolutions, from $10\times10$ to $5\times5$ and to $2\times2$. Max pooling and the rectified linear unit (ReLU) do not require multiplications, so both are cheap on hardware and only require comparisons. The channel count is also reduced from 32, 64, and 128 to 4, 8, and 16. After the last convolution, the flattened feature vector has 64 values instead of 2048.
+
+\subsection{Fully connected layers} The large first fully connected layer of the CNN site is replaced by a small stack of hidden layers with 16 and 8 neurons. Using the smaller flattened vector reduces the classifier from 262\,530 to 1194 parameters. The two outputs are logits. A site is classified as occupied if the second logit is larger than the first, which is equivalent to choosing the larger softmax probability, so no softmax is needed at inference.
+
+\subsection{Neighbor injection} The MF array of Kent et al.\ appends the mean pixel value of the region surrounding each neighboring site to the site's feature vector~\cite{kent2025}. This approach is implemented in the TinyCNN.
+For each site, the mean pixel value is computed across the crops of its eight neighbors in the array, and these eight values are provided as input to the network. In a second variant, the plain mean is replaced by a Gaussian-weighted mean, $\sum G\,I / \sum G$ with $G(x,y) = \exp(-(x^2+y^2)/(2\sigma^2))$ centered on the neighbor, so that the pixels at its center count most. Here, $\sigma$ is the width of the point-spread function, modeled as a Gaussian fitted to the average training image. If a neighbor lies outside the array, it is replaced by the noise floor, defined as the mean value of an empty site, computed in the same way as the neighbor values, as shown for a corner site in Appendix~\ref{app:neighbors}.
+All values are scaled by a constant derived from the training images. The position of this injection is critical. Appending the eight values to the flattened vector would dilute them among the 72 input features. Appending them immediately before the output logits would prevent them from being processed by a hidden layer. To address this, the first fully connected layer is reduced to eight features, which are then concatenated with the eight neighbor values. The resulting network head is illustrated in \cref{fig:tinycnn-injection}. The following variants are considered: TinyCNN, TinyCNN with neighbors, and TinyCNN with Gaussian neighbors.
+
+\begin{figure}[H]
+    \centering
+    \resizebox{0.75\textwidth}{!}{\input{figures/tinycnn_injection.tex}}
+    \caption[Head of the TinyCNN with neighbor injection, starting at the last convolution.]{Head of the TinyCNN with neighbor injection, starting at the last convolution. The layers before it are the same as in \cref{fig:tinycnn}. The 8 features of the site (blue) are concatenated with the 8 neighbor values (green) before the second hidden layer.}
+    \label{fig:tinycnn-injection}
+\end{figure}
+
+\subsection{Size and training} \Cref{tab:size} compares the size of the networks. The TinyCNN with injection has about \SI{99}{\percent} fewer parameters and about \SI{99}{\percent} fewer multiply-accumulate operations than the CNN site. The TinyCNN is trained with the same optimizer and loss as the CNN site, but with its own hyperparameters, including an 800-epoch maximum budget with early stopping. All values are listed in Appendix~\ref{app:training}.
+
+\begin{table}[tbp]
+    \centering
+    \caption{Parameters and multiply-accumulate operations (MACs) per site.}
+    \label{tab:size}
+    \begin{tabular}{@{}lrr@{}}
+        \toprule
+        Network & Parameters & MACs \\
+        \midrule
+        CNN site & 355\,202 & 2\,124\,032 \\
+        TinyCNN & 2698 & 16\,576 \\
+        TinyCNN with neighbors & 2178 & 16\,064 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
